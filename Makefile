@@ -11,7 +11,7 @@ MAKEFLAGS += --no-builtin-rules
 .PHONY: all
 all: debug
 
-NAME = app
+NAME = cmd
 BUILD_DIR := ./build
 BIN_TARGET = $(BUILD_DIR)/$(NAME)
 LIB_TARGET = $(BUILD_DIR)/lib$(NAME).so
