@@ -59,6 +59,7 @@ deps:
 	curl -s --output-dir include -O https://raw.githubusercontent.com/JacksonAllan/CC/refs/heads/main/cc.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/JacksonAllan/Verstable/refs/heads/main/verstable.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/hirrolot/datatype99/refs/heads/master/datatype99.h
+	curl -s --output-dir include -O https://raw.githubusercontent.com/hirrolot/interface99/refs/heads/master/interface99.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/sheredom/utf8.h/refs/heads/master/utf8.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/spevnev/uprintf/main/uprintf.h
 
