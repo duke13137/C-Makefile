@@ -1,20 +1,18 @@
 ---
 BasedOnStyle: Google
 ColumnLimit: 110
-StatementMacros:
-  - INITIALIZER
 AlignConsecutiveMacros: true
 AlignConsecutiveDeclarations: false
 AlwaysBreakBeforeMultilineStrings: false
 AllowShortBlocksOnASingleLine: true
-AllowShortFunctionsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
 AllowShortLoopsOnASingleLine: false
 AllowShortIfStatementsOnASingleLine: false
 KeepEmptyLinesAtTheStartOfBlocks: true
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
 IncludeBlocks: Merge
----
-Language: Cpp
-AllowShortFunctionsOnASingleLine: false
----
-Language: Proto
+StatementMacros:
+  - INITIALIZER
+  - ML99_EVAL
+  - vfunc
+  - vfuncDefault
