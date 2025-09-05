@@ -215,7 +215,7 @@ static void autofree_impl(void *p) {
 #endif
 
 #ifndef ARENA_COMMIT_PAGE_COUNT
-#define ARENA_COMMIT_PAGE_COUNT 16
+#define ARENA_COMMIT_PAGE_COUNT 1024
 #endif
 
 #define ARENA_RESERVE_PAGE_COUNT (1000000 * ARENA_COMMIT_PAGE_COUNT)
