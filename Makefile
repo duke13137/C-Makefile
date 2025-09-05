@@ -25,11 +25,11 @@ DEP := $(OBJ:.o=.d)
 WARN = -Wall -Wextra -Wvla -Wno-unused-parameter -Wno-unused-function -Wno-format-security
 SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=undefined,address
 
-CPPFLAGS += -I./include
+CPPFLAGS += -I./include -I../STC/include
 CFLAGS   += -MMD -MP $(WARN)
 
 .PHONY: debug release
-debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP -DOOM_COMMIT
+debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP
 debug: LDFLAGS += $(SANZ)
 debug: $(BIN_TARGET)
 

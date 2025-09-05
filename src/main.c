@@ -1,4 +1,4 @@
-#ifdef __linux__
+#if defined(LOGGING) && defined(__linux__)
 #define UPRINTF_IMPLEMENTATION
 #include "uprintf.h"
 #endif
@@ -94,7 +94,7 @@ void test_json() {
   // Get the age as an integer.
   int64_t age = json_int64(json_get(json_str, "age"));
 
-  printf("%s %lld\n", last_name, age);
+  printf("%s %ld\n", last_name, age);
 }
 
 #include "cc.h"
@@ -238,17 +238,25 @@ Expr *expr(Arena *arena) {
   return OP(*OP(*OP(Const(53), Add, Const(5)), Sub, Const(10)), Div, Const(8));
 }
 
-void sizeofVLA(size_t n, int (*A)[n][2 * n]) {
-  printf("sizeof *A=%zu\t", sizeof *A);
-  printf("sizeof *A[0]=%zu\t", sizeof *A[0]);
-  printf("sizeof (*A)[0]=%zu\t", sizeof((*A)[0]));
-  printf("sizeof *A[0][0]=%zu\n", sizeof *A[0][0]);
-}
-
 UTEST_STATE();
 
 UTEST(foo, bar) {
   ASSERT_TRUE(1);
+}
+
+#include <stc/coroutine.h>
+
+struct Gen {
+  cco_base base;
+  int start, end, value;
+};
+
+int Gen(struct Gen *g) {
+  cco_async(g) {
+    for (g->value = g->start; g->value < g->end; ++g->value)
+      cco_yield;
+  }
+  return 0;
 }
 
 int main(int argc, const char *argv[]) {
@@ -260,7 +268,7 @@ int main(int argc, const char *argv[]) {
 #ifdef OOM_COMMIT
   Arena arena[] = {arena_init(0, 0)};
 #else
-  autofree void *mem = malloc(ARENA_SIZE);
+  void *mem = malloc(ARENA_SIZE);
   Arena arena[] = {arena_init(mem, ARENA_SIZE)};
 #endif
 
@@ -269,10 +277,10 @@ int main(int argc, const char *argv[]) {
     exit(1);
   }
 
-  // printf("==============\nexpr=%f\n", eval(expr(arena)));
+  printf("==============\nexpr=%f\n", eval(expr(arena)));
 
-  // BinaryTree *tree = mkTree(arena);
-  // printf("==============\nsum=%d\n", sum(tree));
+  BinaryTree *tree = mkTree(arena);
+  printf("==============\nsum=%d\n", sum(tree));
 
   int test_string();
   test_string();
@@ -288,14 +296,8 @@ int main(int argc, const char *argv[]) {
   *Push(&fibs, arena) = 0;
   puts(">>>fibs");
   for (int i = 0; i < fibs.len; ++i)
-    printf("%lld,", fibs.data[i]);
+    printf("%ld,", fibs.data[i]);
   puts("<<<fibs");
-
-  for (int i = 1; i < 99; i++) {
-    typedef int A[i][i * 2];
-    A *a = New(arena, A);
-    sizeofVLA(i, a);
-  }
 
   int test_vt(Arena * arena);
   ALOG(arena);
@@ -316,6 +318,12 @@ int main(int argc, const char *argv[]) {
 
   test_vcall(r);
   test_vcall(t);
+
+  struct Gen gen = {.start = 10, .end = 20};
+
+  cco_run_coroutine(Gen(&gen)) {
+    printf("%d, ", gen.value);
+  }
 
   return utest_main(argc, argv);
 }
