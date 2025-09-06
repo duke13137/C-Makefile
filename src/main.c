@@ -11,6 +11,7 @@
 #include "arena.h"
 #include "debug.h"
 #include "utest.h"
+UTEST_STATE();
 
 astr test_astr(Arena *arena) {
   ALOG(arena);
@@ -155,7 +156,12 @@ struct point *test_init(Arena a, double x, double y) {
   }
 }
 
-#include "adt.h"
+#include "interface99.h"
+#define Shape_IFACE              \
+  vfunc(int, perim, const VSelf) \
+  vfunc(void, scale, VSelf, int factor)
+
+interface(Shape);
 
 // Rectangle implementation
 // ============================================================
@@ -207,57 +213,7 @@ void test_vcall(Shape shape) {
   printf("perim = %d\n", VCALL(shape, perim));
 }
 
-int sum(const BinaryTree *tree) {
-  match(*tree) {
-    of(Leaf, x) return *x;
-    of(Node, lhs, x, rhs) return sum(*lhs) + *x + sum(*rhs);
-  }
-
-  // Invalid input (no such variant).
-  return -1;
-}
-
-BinaryTree *mkTree(Arena *arena) {
-  return NODE(NODE(LEAF(1), 2, NODE(LEAF(3), 4, LEAF(5))), 6, LEAF(7));
-}
-
-double eval(const Expr *expr) {
-  match(*expr) {
-    of(Const, number) return *number;
-    of(Add, lhs, rhs) return eval(*lhs) + eval(*rhs);
-    of(Sub, lhs, rhs) return eval(*lhs) - eval(*rhs);
-    of(Mul, lhs, rhs) return eval(*lhs) * eval(*rhs);
-    of(Div, lhs, rhs) return eval(*lhs) / eval(*rhs);
-  }
-
-  Assert("Invalid expr");
-  return -1;
-}
-
-Expr *expr(Arena *arena) {
-  return OP(*OP(*OP(Const(53), Add, Const(5)), Sub, Const(10)), Div, Const(8));
-}
-
-UTEST_STATE();
-
-UTEST(foo, bar) {
-  ASSERT_TRUE(1);
-}
-
-#include <stc/coroutine.h>
-
-struct Gen {
-  cco_base base;
-  int start, end, value;
-};
-
-int Gen(struct Gen *g) {
-  cco_async(g) {
-    for (g->value = g->start; g->value < g->end; ++g->value)
-      cco_yield;
-  }
-  return 0;
-}
+#include "adt.h"
 
 int main(int argc, const char *argv[]) {
 #ifdef __COSMOCC__
@@ -276,11 +232,6 @@ int main(int argc, const char *argv[]) {
     fputs("!!! OOM_DIE !!!\n", stderr);
     exit(1);
   }
-
-  printf("==============\nexpr=%f\n", eval(expr(arena)));
-
-  BinaryTree *tree = mkTree(arena);
-  printf("==============\nsum=%d\n", sum(tree));
 
   int test_string();
   test_string();
@@ -318,12 +269,6 @@ int main(int argc, const char *argv[]) {
 
   test_vcall(r);
   test_vcall(t);
-
-  struct Gen gen = {.start = 10, .end = 20};
-
-  cco_run_coroutine(Gen(&gen)) {
-    printf("%d, ", gen.value);
-  }
 
   return utest_main(argc, argv);
 }

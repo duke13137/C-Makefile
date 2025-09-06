@@ -23,7 +23,7 @@ LIB_OBJ := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 DEP := $(OBJ:.o=.d)
 
 WARN = -Wall -Wextra -Wvla -Wno-unused-parameter -Wno-unused-function -Wno-format-security
-SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=undefined,address
+SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
 CPPFLAGS += -I./include -I../STC/include
 CFLAGS   += -MMD -MP $(WARN)
