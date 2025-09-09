@@ -13,7 +13,7 @@
 #include "utest.h"
 UTEST_STATE();
 
-astr test_astr(Arena *arena) {
+astr test_astr(Arena* arena) {
   ALOG(arena);
   astr s3 = {0};
 
@@ -47,8 +47,8 @@ astr test_astr(Arena *arena) {
     }
     printf("num of token=%d\n", i);
 
-    autofree char *cs = astr_cstrdup(s3);
-    for (char *p = cs; *p; ++p) {
+    autofree char* cs = astr_cstrdup(s3);
+    for (char* p = cs; *p; ++p) {
       *p += 30;
     }
     printf("test_astr: cs=%s\n", cs);
@@ -59,15 +59,15 @@ astr test_astr(Arena *arena) {
   return astr_clone(arena, s3);
 }
 
-typedef Vec(int64_t) i64vec;
+typedef Array(int64_t) arri64;
 
-i64vec test_slice(Arena *arena) {
+arri64 test_slice(Arena* arena) {
   // Int64s fibs = {0};
   // fibs = slice(arena, fibs);
   // *Push(&fibs, arena) = 2;
   // *Push(&fibs, arena) = 3;
   int64_t data[] = {2, 3, 42};
-  i64vec fibs = {.data = data, .len = countof(data)};
+  arri64 fibs = {.data = data, .len = countof(data)};
   fibs = Slice(arena, fibs, 0, 2);
   {
     Scratch(arena);
@@ -131,7 +131,7 @@ int test_vec() {
   // Printed: 1 1 2 2 4 4 5 5 7 7 8 8
 
   // Iteration #2.
-  for (int *el = cc_first(&our_vec); el != cc_end(&our_vec); el = cc_next(&our_vec, el))
+  for (int* el = cc_first(&our_vec); el != cc_end(&our_vec); el = cc_next(&our_vec, el))
     printf("%d ", *el);
   // Printed: Same as above.
 
@@ -147,9 +147,9 @@ struct point {
   double y;
 };
 
-struct point *test_init(Arena a, double x, double y) {
+struct point* test_init(Arena a, double x, double y) {
   {
-    struct point *p = New(&a, struct point);
+    struct point* p = New(&a, struct point);
     p->x = x;
     p->y = y;
     return p;
@@ -215,7 +215,7 @@ void test_vcall(Shape shape) {
 
 #include "adt.h"
 
-int main(int argc, const char *argv[]) {
+int main(int argc, const char* argv[]) {
 #ifdef __COSMOCC__
   ShowCrashReports();
 #endif
@@ -224,7 +224,7 @@ int main(int argc, const char *argv[]) {
 #ifdef OOM_COMMIT
   Arena arena[] = {arena_init(0, 0)};
 #else
-  void *mem = malloc(ARENA_SIZE);
+  void* mem = malloc(ARENA_SIZE);
   Arena arena[] = {arena_init(mem, ARENA_SIZE)};
 #endif
 
@@ -242,7 +242,7 @@ int main(int argc, const char *argv[]) {
   test_pqueue(arena);
   ALOG(arena);
 
-  i64vec fibs = test_slice(arena);
+  arri64 fibs = test_slice(arena);
   fibs.cap = 0;
   *Push(&fibs, arena) = 0;
   puts(">>>fibs");
@@ -259,8 +259,8 @@ int main(int argc, const char *argv[]) {
   printf("main: %.*s\n", S(s));
 
   ALOG(arena);
-  struct point *p = test_init(*arena, 1.0, 2.0);
-  struct point *p2 = New(arena, struct point, 1, p);
+  struct point* p = test_init(*arena, 1.0, 2.0);
+  struct point* p2 = New(arena, struct point, 1, p);
   ULOG(p2);
   ALOG(arena);
 

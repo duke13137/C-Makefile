@@ -3,11 +3,11 @@
 #include "cc.h"
 #include "debug.h"
 
-static inline void *vt_arena_malloc(size_t size, Arena **ctx) {
+static inline void* vt_arena_malloc(size_t size, Arena** ctx) {
   return arena_malloc(size, *ctx);
 }
 
-static inline void vt_arena_free(void *ptr, size_t size, Arena **ctx) {
+static inline void vt_arena_free(void* ptr, size_t size, Arena** ctx) {
   arena_free(ptr, size, *ctx);
 }
 
@@ -18,14 +18,14 @@ static inline size_t astr_wyhash(astr key) {
 #define NAME      Map_astr_astr
 #define KEY_TY    astr
 #define VAL_TY    astr
-#define CTX_TY    Arena *
+#define CTX_TY    Arena*
 #define CMPR_FN   astr_equals
 #define HASH_FN   astr_wyhash
 #define MALLOC_FN vt_arena_malloc
 #define FREE_FN   vt_arena_free
 #include "verstable.h"
 
-void test_vt(Arena *arena) {
+void test_vt(Arena* arena) {
   ALOG(arena);
 
   Map_astr_astr mymap;
@@ -65,7 +65,7 @@ void test_vt(Arena *arena) {
 #define BGEN_FREE   arena_free(ptr, size, udata);
 #include "bgen.h"
 
-int test_pqueue(Arena *arena) {
+int test_pqueue(Arena* arena) {
   {
     Scratch(arena);
     int data[] = {1, 8, 5, 6, 3, 4, 0, 9, 7, 2};
@@ -76,7 +76,7 @@ int test_pqueue(Arena *arena) {
     }
     printf("\n");
 
-    struct max_priority_queue *max_priority_queue = 0;
+    struct max_priority_queue* max_priority_queue = 0;
 
     // Fill the priority queue.
     for (int i = 0; i < n; i++) {
@@ -91,7 +91,7 @@ int test_pqueue(Arena *arena) {
     }
     printf("\n");
 
-    struct min_priority_queue *min_priority_queue = 0;
+    struct min_priority_queue* min_priority_queue = 0;
 
     // Fill the priority queue.
     for (int i = 0; i < n; i++) {
@@ -141,25 +141,15 @@ int test_string(void) {
     goto CLEANUP;
   }
 
-  str(char) our_str_lookup_key;
-  init(&our_str_lookup_key);
-
-  // Regular lookup using a CC string.
-  if (!push_fmt(&our_str_lookup_key, "Japan")) {
-    err = -1;
-    goto CLEANUP;
-  }
-  str(char) *el = get(&our_map, our_str_lookup_key);
-  char *s = first(el);
-  puts(s);
-
   // Heterogeneous lookup using a C string.
   // This requires no dynamic memory allocations.
-  el = get(&our_map, "France");
+  str(char)* el = get(&our_map, "France");
+  puts(first(el));
+
+  el = get(&our_map, "Japan");
   puts(first(el));
 
 CLEANUP:
-  cleanup(&our_str_lookup_key);
   cleanup(&our_map);
 
   return err;

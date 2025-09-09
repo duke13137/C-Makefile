@@ -3,8 +3,8 @@
 
 #ifdef LOGGING
 #define ALOG(a)                                                                                    \
-  printf("%s:%d %s: " #a " = { beg=%p end=%p used=%td free=%td }\n", __FILE__, __LINE__, __func__, \
-         ((a)->beg), ((a)->end), (isize)((a)->end - ((a)->init)), (isize)((a)->end - ((a)->beg)))
+  printf("%s:%d %s: " #a " = { cur=%p end=%p used=%td free=%td }\n", __FILE__, __LINE__, __func__, \
+         ((a)->cur), ((a)->end), (isize)((a)->cur - ((a)->beg)), (isize)((a)->end - ((a)->cur)))
 #else
 #define ALOG(a) ((void)a)
 #endif

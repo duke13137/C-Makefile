@@ -88,8 +88,8 @@ typedef unsigned char byte;
 
 typedef struct Arena Arena;
 struct Arena {
-  byte *init;
   byte *beg;
+  byte *cur;
   byte *end;
   jmp_buf *jmpbuf;
 #ifdef OOM_COMMIT
@@ -158,8 +158,8 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
   Arena *ARENA_TMP = arena; \
   Arena arena[] = {*ARENA_TMP}
 
-#define Vec(T)     \
-  struct Vec_##T { \
+#define Array(T)     \
+  struct Array_##T { \
     T *data;       \
     isize len;     \
     isize cap;     \
@@ -223,26 +223,27 @@ static void autofree_impl(void *p) {
 ARENA_INLINE Arena arena_init(byte *mem, isize size) {
   Arena a = {0};
 #ifdef OOM_COMMIT
+  isize page_size = sysconf(_SC_PAGESIZE);
+  a.commit_size = page_size * ARENA_COMMIT_PAGE_COUNT;
   if (size == 0) {
-    isize page_size = sysconf(_SC_PAGESIZE);
-    a.commit_size = size = page_size * ARENA_COMMIT_PAGE_COUNT;
-    if (mem == NULL) {
-      mem = mmap(0, page_size * ARENA_RESERVE_PAGE_COUNT, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-      if (mem == MAP_FAILED) {
-        perror("arena_init mmap");
-        Assert(!"arena_init mmap");
-      }
+    size = a.commit_size;
+    mem = mmap(mem, page_size * ARENA_RESERVE_PAGE_COUNT, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mem == MAP_FAILED) {
+      perror("arena_init mmap");
+      Assert(!"arena_init mmap");
     }
-    Assert(!mprotect(mem, size, PROT_READ | PROT_WRITE));
+    Assert(!mprotect(mem, a.commit_size, PROT_READ | PROT_WRITE));
+  } else {
+    // assume mem + size already mapped and committed.
   }
 #endif
-  a.init = a.beg = mem;
+  a.beg = a.cur = mem;
   a.end = mem ? mem + size : 0;
   return a;
 }
 
 ARENA_INLINE void arena_reset(Arena *arena) {
-  arena->beg = arena->init;
+  arena->cur = arena->beg;
 }
 
 static void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
@@ -250,7 +251,7 @@ static void *arena_alloc(Arena *arena, isize size, isize align, isize count, Are
   Assert(size > 0 && "size must be positive");
   Assert(count > 0 && "count must be positive");
 
-  byte *current = arena->beg;
+  byte *current = arena->cur;
   isize avail = arena->end - current;
   isize pad = -(uintptr_t)current & (align - 1);
   while (ARENA_UNLIKELY(count >= (avail - pad) / size)) {
@@ -270,7 +271,7 @@ static void *arena_alloc(Arena *arena, isize size, isize align, isize count, Are
   }
 
   isize total_size = size * count;
-  arena->beg += pad + total_size;
+  arena->cur += pad + total_size;
   current += pad;
   return flags.mask & _NO_INIT ? current : memset(current, 0, total_size);
 
@@ -306,7 +307,7 @@ ARENA_INLINE void slice_grow(void *slice, isize size, isize align, Arena *arena)
     slicemeta.cap = slicemeta.len + grow;
     void *ptr = arena_alloc(arena, size, align, slicemeta.cap, NO_INIT);
     slicemeta.data = memmove(ptr, slicemeta.data, size * slicemeta.len);
-  } else if (ARENA_LIKELY((uintptr_t)slicemeta.data == (uintptr_t)arena->beg - size * slicemeta.cap)) {
+  } else if (ARENA_LIKELY((uintptr_t)slicemeta.data == (uintptr_t)arena->cur - size * slicemeta.cap)) {
     // grow slice inplace
     slicemeta.cap += grow;
     arena_alloc(arena, size, 1, grow, NO_INIT);
@@ -327,8 +328,8 @@ ARENA_INLINE void arena_free(void *ptr, size_t size, Arena *arena) {
   Assert(arena != NULL && "arena cannot be NULL");
   if (!ptr)
     return;
-  if ((uintptr_t)ptr == (uintptr_t)arena->beg - size) {
-    arena->beg = ptr;
+  if ((uintptr_t)ptr == (uintptr_t)arena->cur - size) {
+    arena->cur = ptr;
   }
 }
 
@@ -347,7 +348,7 @@ typedef struct astr {
 ARENA_INLINE astr astr_clone(Arena *arena, astr s) {
   astr s2 = s;
   // Early return if string is empty or already at arena boundary
-  if (s.len == 0 || s.data + s.len == (char *)arena->beg)
+  if (s.len == 0 || s.data + s.len == (char *)arena->cur)
     return s2;
 
   s2.data = New(arena, char, s.len, NO_INIT);
@@ -360,10 +361,10 @@ ARENA_INLINE astr astr_concat(Arena *arena, astr head, astr tail) {
   // Ignore empty head
   if (head.len == 0) {
     // If tail is at arena tip, return it directly; otherwise clone
-    return tail.len && tail.data + tail.len == (char *)arena->beg ? tail : astr_clone(arena, tail);
+    return tail.len && tail.data + tail.len == (char *)arena->cur ? tail : astr_clone(arena, tail);
   }
   // If head isn't at arena tip, clone it
-  if (head.data + head.len != (char *)arena->beg) {
+  if (head.data + head.len != (char *)arena->cur) {
     result = astr_clone(arena, head);
   }
   // Now head is guaranteed to be at arena tip, clone tail and append it
@@ -399,7 +400,7 @@ static astr astr_format(Arena *arena, const char *format, ...) {
   va_end(args);
   Assert(nbytes2 == nbytes);
   // drop \0 so that astr_concat still works
-  arena->beg--;
+  arena->cur--;
   return (astr){.data = data, .len = nbytes};
 }
 
