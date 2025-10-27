@@ -156,64 +156,32 @@ struct point* test_init(Arena a, double x, double y) {
   }
 }
 
-#include "interface99.h"
-#define Shape_IFACE              \
-  vfunc(int, perim, const VSelf) \
-  vfunc(void, scale, VSelf, int factor)
-
-interface(Shape);
-
-// Rectangle implementation
-// ============================================================
-
-typedef struct {
-  int a, b;
-} Rectangle;
-
-int Rectangle_perim(const VSelf) {
-  VSELF(const Rectangle);
-  return (self->a + self->b) * 2;
-}
-
-void Rectangle_scale(VSelf, int factor) {
-  VSELF(Rectangle);
-  self->a *= factor;
-  self->b *= factor;
-}
-
-impl(Shape, Rectangle);
-
-// Triangle implementation
-// ============================================================
-
-typedef struct {
-  int a, b, c;
-} Triangle;
-
-int Triangle_perim(const VSelf) {
-  VSELF(const Triangle);
-  return self->a + self->b + self->c;
-}
-
-void Triangle_scale(VSelf, int factor) {
-  VSELF(Triangle);
-  self->a *= factor;
-  self->b *= factor;
-  self->c *= factor;
-}
-
-impl(Shape, Triangle);
-
-// Test
-// ============================================================
-
-void test_vcall(Shape shape) {
-  printf("perim = %d\n", VCALL(shape, perim));
-  VCALL(shape, scale, 5);
-  printf("perim = %d\n", VCALL(shape, perim));
-}
-
 #include "adt.h"
+
+UTEST(stc, adt) {
+  enum { size = KB(1) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+  ASSERT_EQ(15, tree_sum(mkTree(arena)));
+}
+
+#include "object.h"
+
+UTEST(interface99, oop) {
+  enum { size = KB(1) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  IShape r = newRectangle(arena, 5, 7);
+  ASSERT_EQ(VCALL(r, perim), 24);
+  VCALL(r, scale, 5);
+  ASSERT_EQ(VCALL(r, perim), 120);
+
+  IShape t = newTriangle(arena, 5, 7, 3);
+  ASSERT_EQ(VCALL(t, perim), 15);
+  VCALL(t, scale, 5);
+  ASSERT_EQ(VCALL(t, perim), 75);
+}
 
 int main(int argc, const char* argv[]) {
 #ifdef __COSMOCC__
@@ -224,7 +192,7 @@ int main(int argc, const char* argv[]) {
 #ifdef OOM_COMMIT
   Arena arena[] = {arena_init(0, 0)};
 #else
-  void* mem = malloc(ARENA_SIZE);
+  autofree void* mem = malloc(ARENA_SIZE);
   Arena arena[] = {arena_init(mem, ARENA_SIZE)};
 #endif
 
@@ -263,12 +231,6 @@ int main(int argc, const char* argv[]) {
   struct point* p2 = New(arena, struct point, 1, p);
   ULOG(p2);
   ALOG(arena);
-
-  Shape r = DYN_LIT(Rectangle, Shape, {5, 7});
-  Shape t = DYN_LIT(Triangle, Shape, {10, 20, 30});
-
-  test_vcall(r);
-  test_vcall(t);
 
   return utest_main(argc, argv);
 }

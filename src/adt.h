@@ -5,7 +5,6 @@
 
 #include "arena.h"
 #include "stc/sys/sumtype.h"
-#include "utest.h"
 
 #ifndef _CLANGD
 #include "datatype99.h"
@@ -76,9 +75,3 @@ static Tree* mkTree(Arena *arena) {
     return tree;
 }
 
-UTEST(stc, adt) {
-  enum { size = KB(1) };
-  byte mem[size] = {0};
-  Arena arena[] = {arena_init(mem, size)};
-  ASSERT_EQ(15, tree_sum(mkTree(arena)));
-}
