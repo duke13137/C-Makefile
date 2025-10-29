@@ -5,7 +5,6 @@
 #define IShape_IFACE             \
   vfunc(int, perim, const VSelf) \
   vfunc(void, scale, VSelf, int factor)
-
 interface(IShape);
 
 typedef struct Arena Arena;

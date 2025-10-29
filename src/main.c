@@ -173,14 +173,18 @@ UTEST(interface99, oop) {
   Arena arena[] = {arena_init(mem, size)};
 
   IShape r = newRectangle(arena, 5, 7);
-  ASSERT_EQ(VCALL(r, perim), 24);
+  int p = VCALL(r, perim);
+  ASSERT_EQ(p, 24);
   VCALL(r, scale, 5);
-  ASSERT_EQ(VCALL(r, perim), 120);
+  p = VCALL(r, perim);
+  ASSERT_EQ(p, 120);
 
   IShape t = newTriangle(arena, 5, 7, 3);
-  ASSERT_EQ(VCALL(t, perim), 15);
+  p = VCALL(t, perim);
+  ASSERT_EQ(p, 15);
   VCALL(t, scale, 5);
-  ASSERT_EQ(VCALL(t, perim), 75);
+  p = VCALL(t, perim);
+  ASSERT_EQ(p, 75);
 }
 
 int main(int argc, const char* argv[]) {

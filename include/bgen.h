@@ -502,7 +502,7 @@ static void BGEN_SYM(rc_retain)(BGEN_SYM(rc_t) *rc) {
 }
 static bool BGEN_SYM(rc_release)(BGEN_SYM(rc_t) *rc) {
     *rc--;
-    return *rc == 1;
+    return *rc == 0;
 }
 static bool BGEN_SYM(rc_shared)(BGEN_SYM(rc_t) *rc) {
     return *rc > 1;

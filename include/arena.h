@@ -286,7 +286,7 @@ HANDLE_OOM:
 }
 
 ARENA_INLINE void *arena_alloc_init(Arena *arena, isize size, isize align, isize count,
-                                    const void *const initptr) {
+                                    const void *initptr) {
   Assert(initptr != NULL && "initptr cannot be NULL");
   void *ptr = arena_alloc(arena, size, align, count, NO_INIT);
   memmove(ptr, initptr, size * count);
@@ -301,7 +301,7 @@ ARENA_INLINE void slice_grow(void *slice, isize size, isize align, Arena *arena)
   } slicemeta;
   memcpy(&slicemeta, slice, sizeof(slicemeta));
 
-  const int grow = 16;
+  enum { grow = 16 };
 
   if (slicemeta.cap == 0) {
     slicemeta.cap = slicemeta.len + grow;

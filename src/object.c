@@ -4,10 +4,9 @@
 // Rectangle implementation
 // ============================================================
 
-typedef struct Rectangle Rectangle;
-struct Rectangle {
+typedef struct {
   int a, b;
-};
+} Rectangle;
 
 int Rectangle_perim(const VSelf) {
   VSELF(const Rectangle);
@@ -32,10 +31,9 @@ IShape newRectangle(Arena* arena, int x, int y) {
 // Triangle implementation
 // ============================================================
 
-typedef struct Triangle Triangle;
-struct Triangle {
+typedef struct {
   int a, b, c;
-};
+} Triangle;
 
 int Triangle_perim(const VSelf) {
   VSELF(const Triangle);
