@@ -139,9 +139,12 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
 #define _NEWX(a, b, c, d, e, ...) e
 #define _NEW2(a, t)               (t *)arena_alloc(a, sizeof(t), _Alignof(t), 1, (ArenaFlag){0})
 #define _NEW3(a, t, n)            (t *)arena_alloc(a, sizeof(t), _Alignof(t), n, (ArenaFlag){0})
-#define _NEW4(a, t, n, z)                                                                         \
-  (t *)_Generic((z), t *: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), _Alignof(t), n, \
-                                                                    _Generic((z), t *: z, ArenaFlag: z))
+#define _NEW4(a, t, n, z)                                                   \
+  ({                                                                        \
+    __auto_type _z = (z);                                                   \
+    (t *)_Generic(_z, t *: arena_alloc_init, ArenaFlag: arena_alloc)        \
+      (a, sizeof(t), _Alignof(t), n, _Generic(_z, t *: _z, ArenaFlag: _z)); \
+  })
 
 #define ArenaOOM(arena)      \
   ({                         \
@@ -160,9 +163,9 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
 
 #define Array(T)     \
   struct Array_##T { \
-    T *data;       \
-    isize len;     \
-    isize cap;     \
+    T *data;         \
+    isize len;       \
+    isize cap;       \
   }
 
 #define Slice(...)                   _SliceX(__VA_ARGS__, _Slice4, _Slice3, _Slice2)(__VA_ARGS__)
@@ -174,15 +177,15 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
     Assert(start >= 0 && "slice start must be non-negative");                    \
     Assert(length >= 0 && "slice length must be non-negative");                  \
     Assert(slice.len >= (start) + (length) && "Invalid slice range");            \
-    __typeof__(slice) s_ = slice;                                                \
-    s_.cap = s_.len = length;                                                    \
-    if (s_.len == 0) {                                                           \
-      s_.data = NULL;                                                            \
+    __auto_type _s = slice;                                                      \
+    _s.cap = _s.len = length;                                                    \
+    if (_s.len == 0) {                                                           \
+      _s.data = NULL;                                                            \
     }                                                                            \
-    if (s_.data) {                                                               \
-      s_.data = New(arena, __typeof__(s_.data[0]), s_.len, (s_.data + (start))); \
+    if (_s.data) {                                                               \
+      _s.data = New(arena, __typeof__(_s.data[0]), _s.len, (_s.data + (start))); \
     }                                                                            \
-    s_;                                                                          \
+    _s;                                                                          \
   })
 
 #define Push(slice, arena)                                                         \
@@ -190,11 +193,11 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
     Assert((slice)->len >= 0 && "slice.len must be non-negative");                 \
     Assert((slice)->cap >= 0 && "slice.cap must be non-negative");                 \
     Assert(!((slice)->len == 0 && (slice)->data != NULL) && "Invalid slice");      \
-    __typeof__(slice) s_ = slice;                                                  \
-    if (s_->len >= s_->cap) {                                                      \
-      slice_grow(s_, sizeof(*s_->data), _Alignof(__typeof__(*s_->data)), (arena)); \
+    __auto_type _s = slice;                                                        \
+    if (_s->len >= _s->cap) {                                                      \
+      slice_grow(_s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data)), (arena)); \
     }                                                                              \
-    s_->data + s_->len++;                                                          \
+    _s->data + _s->len++;                                                          \
   })
 
 #ifdef __GNUC__
@@ -276,11 +279,11 @@ static void *arena_alloc(Arena *arena, isize size, isize align, isize count, Are
   return flags.mask & _NO_INIT ? current : memset(current, 0, total_size);
 
 HANDLE_OOM:
-  if (flags.mask & _OOM_NULL)
-    return NULL;
 #ifdef OOM_TRAP
   Assert(!OOM_TRAP);
 #endif
+  if (flags.mask & _OOM_NULL)
+    return NULL;
   Assert(arena->jmpbuf && "not set by ArenaOOM");
   longjmp(*arena->jmpbuf, 1);
 }

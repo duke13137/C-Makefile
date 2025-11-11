@@ -5,6 +5,7 @@
 
 #include "arena.h"
 #include "stc/sys/sumtype.h"
+#include "utest.h"
 
 #ifndef _CLANGD
 #include "datatype99.h"
