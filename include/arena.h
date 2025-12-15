@@ -19,7 +19,6 @@
 #ifndef ARENA_H_
 #define ARENA_H_
 
-#define _GNU_SOURCE
 #include <memory.h>
 #include <setjmp.h>
 #include <stdarg.h>
@@ -120,7 +119,8 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
   Arena arena[] = { arena_init(mem, ARENA_SIZE) };
 #endif
 
-  if (ArenaOOM(arena)) {
+  jmp_buf jmpbuf;
+  if (ArenaOOM(arena, jmpbuf)) {
     abort();
   }
 
@@ -146,12 +146,7 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
       (a, sizeof(t), _Alignof(t), n, _Generic(_z, t *: _z, ArenaFlag: _z)); \
   })
 
-#define ArenaOOM(arena)      \
-  ({                         \
-    jmp_buf jmpbuf;          \
-    arena->jmpbuf = &jmpbuf; \
-    setjmp(jmpbuf);          \
-  })
+#define ArenaOOM(arena, jmpbuf)   ((arena)->jmpbuf = &jmpbuf, setjmp(jmpbuf))
 
 #define CONCAT_(a, b) a##b
 #define CONCAT(a, b)  CONCAT_(a, b)
@@ -349,28 +344,26 @@ typedef struct astr {
 #define S(s) (int)(s).len, (s).data
 
 ARENA_INLINE astr astr_clone(Arena *arena, astr s) {
-  astr s2 = s;
-  // Early return if string is empty or already at arena boundary
+  // Early return if string is empty or already at arena tip
   if (s.len == 0 || s.data + s.len == (char *)arena->cur)
-    return s2;
+    return s;
 
+  astr s2 = s;
   s2.data = New(arena, char, s.len, NO_INIT);
   memmove(s2.data, s.data, s.len);
   return s2;
 }
 
 ARENA_INLINE astr astr_concat(Arena *arena, astr head, astr tail) {
-  astr result = head;
   // Ignore empty head
   if (head.len == 0) {
     // If tail is at arena tip, return it directly; otherwise clone
     return tail.len && tail.data + tail.len == (char *)arena->cur ? tail : astr_clone(arena, tail);
   }
-  // If head isn't at arena tip, clone it
-  if (head.data + head.len != (char *)arena->cur) {
-    result = astr_clone(arena, head);
-  }
-  // Now head is guaranteed to be at arena tip, clone tail and append it
+
+  astr result = head;
+  result = astr_clone(arena, head);
+  // result is guaranteed to be at arena tip, clone tail and append it
   result.len += astr_clone(arena, tail).len;
   return result;
 }
@@ -407,14 +400,14 @@ static astr astr_format(Arena *arena, const char *format, ...) {
   return (astr){.data = data, .len = nbytes};
 }
 
-// just like strndup
-ARENA_INLINE char *astr_cstrdup(astr s) {
-  return strndup(s.data, s.len);
-}
-
 // return a null-terminated byte string with a temporary lifetime.
 ARENA_INLINE const char *astr_to_cstr(Arena arena, astr s) {
   return astr_concat(&arena, s, astr("\0")).data;
+}
+
+// just like strndup, caller must free it!
+ARENA_INLINE char *astr_cstrdup(astr s) {
+  return strndup(s.data, s.len);
 }
 
 ARENA_INLINE astr _astr_split_by_char(astr s, const char *charset, isize *pos, Arena *a) {
@@ -467,6 +460,20 @@ ARENA_INLINE bool astr_starts_with(astr s, astr prefix) {
 ARENA_INLINE bool astr_ends_with(astr s, astr suffix) {
   isize n = suffix.len;
   return n <= s.len && !memcmp(s.data + s.len - n, suffix.data, n);
+}
+
+ARENA_INLINE astr astr_substr(astr s, isize pos, isize len) {
+    Assert(((size_t)pos <= (size_t)s.len) & (len >= 0));
+    if (pos + len > s.len) len = s.len - pos;
+    s.data += pos, s.len = len;
+    return s;
+}
+
+ARENA_INLINE astr astr_slice(astr s, isize p1, isize p2) {
+    Assert(((size_t)p1 <= (size_t)p2) & ((size_t)p1 <= (size_t)s.len));
+    if (p2 > s.len) p2 = s.len;
+    s.data += p1, s.len = p2 - p1;
+    return s;
 }
 
 ARENA_INLINE astr astr_trim_left(astr s) {

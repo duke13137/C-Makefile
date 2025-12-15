@@ -42,7 +42,7 @@ astr test_astr(Arena* arena) {
     i = 0;
     for (astr_split_by_char(it, ",| $", s3, arena)) {
       New(arena, long);
-      printf("'%s'\n", astr_to_cstr(*arena, it.token));
+      printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1,10)));
       i++;
     }
     printf("num of token=%d\n", i);
@@ -192,7 +192,7 @@ int main(int argc, const char* argv[]) {
   ShowCrashReports();
 #endif
 
-  enum { ARENA_SIZE = MB(1) };
+  enum { ARENA_SIZE = KB(1) };
 #ifdef OOM_COMMIT
   Arena arena[] = {arena_init(0, 0)};
 #else
@@ -200,7 +200,8 @@ int main(int argc, const char* argv[]) {
   Arena arena[] = {arena_init(mem, ARENA_SIZE)};
 #endif
 
-  if (ArenaOOM(arena)) {
+  jmp_buf jmpbuf;
+  if (ArenaOOM(arena, jmpbuf)) {
     fputs("!!! OOM_DIE !!!\n", stderr);
     exit(1);
   }

@@ -29,11 +29,11 @@ CPPFLAGS += -I./include -I../STC/include
 CFLAGS   += -MMD -MP $(WARN)
 
 .PHONY: debug release
-debug: CFLAGS += $(SANZ) -Og -g3 -DLOGGING -DOOM_TRAP
+debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP
 debug: LDFLAGS += $(SANZ)
 debug: $(BIN_TARGET)
 
-release: CFLAGS  += -O2 -g -DNDEBUG #-DOOM_COMMIT
+release: CFLAGS  += -O2 -g -DNDEBUG -DOOM_COMMIT
 release: LDFLAGS +=
 release: $(BIN_TARGET)
 

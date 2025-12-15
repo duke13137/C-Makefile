@@ -36,7 +36,15 @@ static double eval(const Expr *expr) {
 }
 
 static Expr *expr(Arena *arena) {
-  return OP(*OP(*OP(Const(53), Add, Const(5)), Sub, Const(10)), Div, Const(8));
+  return OP(*OP(*OP(Const(53),
+                    Add,
+                    Const(5)),
+                Sub,
+                Const(10)),
+            Div,
+            *OP(Const(3),
+                Add,
+                Const(5)));
 }
 
 UTEST(datatype99, adt) {
