@@ -7,7 +7,7 @@
  * OOM_COMMIT is defined). Key features:
  * - Fast allocation with minimal overhead
  * - Optional zero-initialization
- * - Slice and string utilities
+ * - slice and string utilities
  * - OOM handling via setjmp/longjmp or NULL return
  *
  * Credit:
@@ -33,6 +33,16 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
+
+#ifdef __GNUC__
+static void autofree_impl(void *p) {
+  free(*((void **)p));
+}
+#define autofree __attribute__((__cleanup__(autofree_impl)))
+#else
+#warning "autofree is not supported on your compiler, use free()"
+#define autofree
 #endif
 
 // Branch optimization macros.
@@ -146,8 +156,6 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
       (a, sizeof(t), _Alignof(t), n, _Generic(_z, t *: _z, ArenaFlag: _z)); \
   })
 
-#define ArenaOOM(arena, jmpbuf)   ((arena)->jmpbuf = &jmpbuf, setjmp(jmpbuf))
-
 #define CONCAT_(a, b) a##b
 #define CONCAT(a, b)  CONCAT_(a, b)
 #define ARENA_TMP     CONCAT(_arena_, __LINE__)
@@ -156,18 +164,30 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
   Arena *ARENA_TMP = arena; \
   Arena arena[] = {*ARENA_TMP}
 
-#define Array(T)     \
-  struct Array_##T { \
+#define slice(T)     \
+  struct slice_##T { \
     T *data;         \
     isize len;       \
     isize cap;       \
   }
 
-#define Slice(...)                   _SliceX(__VA_ARGS__, _Slice4, _Slice3, _Slice2)(__VA_ARGS__)
-#define _SliceX(a, b, c, d, e, ...)  e
-#define _Slice2(arena, slice)        _Slice3(arena, slice, 0)
-#define _Slice3(arena, slice, start) _Slice4(arena, slice, start, slice.len - (start))
-#define _Slice4(arena, slice, start, length)                                     \
+#define Push(slice, arena)                                                          \
+  ({                                                                                \
+    Assert((slice)->len >= 0 && "slice.len must be non-negative");                  \
+    Assert((slice)->cap >= 0 && "slice.cap must be non-negative");                  \
+    Assert(!((slice)->len == 0 && (slice)->data != NULL) && "Invalid slice");       \
+    __auto_type _s = slice;                                                         \
+    if (_s->len >= _s->cap) {                                                       \
+      arena_slice((arena), _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
+    }                                                                               \
+    _s->data + _s->len++;                                                           \
+  })
+
+#define Clone(...)                   _CloneX(__VA_ARGS__, _Clone4, _Clone3, _Clone2)(__VA_ARGS__)
+#define _CloneX(a, b, c, d, e, ...)  e
+#define _Clone2(arena, slice)        _Clone3(arena, slice, 0)
+#define _Clone3(arena, slice, start) _Clone4(arena, slice, start, slice.len - (start))
+#define _Clone4(arena, slice, start, length)                                     \
   ({                                                                             \
     Assert(start >= 0 && "slice start must be non-negative");                    \
     Assert(length >= 0 && "slice length must be non-negative");                  \
@@ -182,28 +202,6 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
     }                                                                            \
     _s;                                                                          \
   })
-
-#define Push(slice, arena)                                                         \
-  ({                                                                               \
-    Assert((slice)->len >= 0 && "slice.len must be non-negative");                 \
-    Assert((slice)->cap >= 0 && "slice.cap must be non-negative");                 \
-    Assert(!((slice)->len == 0 && (slice)->data != NULL) && "Invalid slice");      \
-    __auto_type _s = slice;                                                        \
-    if (_s->len >= _s->cap) {                                                      \
-      slice_grow(_s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data)), (arena)); \
-    }                                                                              \
-    _s->data + _s->len++;                                                          \
-  })
-
-#ifdef __GNUC__
-static void autofree_impl(void *p) {
-  free(*((void **)p));
-}
-#define autofree __attribute__((__cleanup__(autofree_impl)))
-#else
-#warning "autofree is not supported on your compiler, use free()"
-#define autofree
-#endif
 
 // Ensures inlining if possible.
 #if defined(__GNUC__)
@@ -243,6 +241,8 @@ ARENA_INLINE Arena arena_init(byte *mem, isize size) {
 ARENA_INLINE void arena_reset(Arena *arena) {
   arena->cur = arena->beg;
 }
+
+#define ArenaOOM(arena, jmpbuf)   ((arena)->jmpbuf = &jmpbuf, setjmp(jmpbuf))
 
 static void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
   Assert(arena != NULL && "arena cannot be NULL");
@@ -291,31 +291,32 @@ ARENA_INLINE void *arena_alloc_init(Arena *arena, isize size, isize align, isize
   return ptr;
 }
 
-ARENA_INLINE void slice_grow(void *slice, isize size, isize align, Arena *arena) {
+ARENA_INLINE void arena_slice(Arena *arena, void *slice, isize size, isize align) {
   struct {
     void *data;
     isize len;
     isize cap;
-  } slicemeta;
-  memcpy(&slicemeta, slice, sizeof(slicemeta));
+  } tmp;
+  memcpy(&tmp, slice, sizeof(tmp));
 
   enum { grow = 16 };
 
-  if (slicemeta.cap == 0) {
-    slicemeta.cap = slicemeta.len + grow;
-    void *ptr = arena_alloc(arena, size, align, slicemeta.cap, NO_INIT);
-    slicemeta.data = memmove(ptr, slicemeta.data, size * slicemeta.len);
-  } else if (ARENA_LIKELY((uintptr_t)slicemeta.data == (uintptr_t)arena->cur - size * slicemeta.cap)) {
+  if (tmp.cap == 0) {
+    // move slice from stack
+    tmp.cap = tmp.len + grow;
+    void *ptr = arena_alloc(arena, size, align, tmp.cap, NO_INIT);
+    tmp.data = tmp.len == 0 ? ptr : memmove(ptr, tmp.data, size * tmp.len);
+  } else if (ARENA_LIKELY((uintptr_t)tmp.data == (uintptr_t)arena->cur - size * tmp.cap)) {
     // grow slice inplace
-    slicemeta.cap += grow;
+    tmp.cap += grow;
     arena_alloc(arena, size, 1, grow, NO_INIT);
   } else {
-    slicemeta.cap += Max(slicemeta.cap / 2, grow);
-    void *ptr = arena_alloc(arena, size, align, slicemeta.cap, NO_INIT);
-    slicemeta.data = memmove(ptr, slicemeta.data, size * slicemeta.len);
+    tmp.cap += Max(tmp.cap / 2, grow);
+    void *ptr = arena_alloc(arena, size, align, tmp.cap, NO_INIT);
+    tmp.data = memmove(ptr, tmp.data, size * tmp.len);
   }
 
-  memcpy(slice, &slicemeta, sizeof(slicemeta));
+  memcpy(slice, &tmp, sizeof(tmp));
 }
 
 ARENA_INLINE void *arena_malloc(size_t size, Arena *arena) {

@@ -42,7 +42,7 @@ astr test_astr(Arena* arena) {
     i = 0;
     for (astr_split_by_char(it, ",| $", s3, arena)) {
       New(arena, long);
-      printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1,10)));
+      printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1, 10)));
       i++;
     }
     printf("num of token=%d\n", i);
@@ -59,15 +59,18 @@ astr test_astr(Arena* arena) {
   return astr_clone(arena, s3);
 }
 
-typedef Array(int64_t) arri64;
+typedef slice(int64_t) i64s;
 
-arri64 test_slice(Arena* arena) {
-  // Int64s fibs = {0};
-  // fibs = slice(arena, fibs);
-  // *Push(&fibs, arena) = 2;
-  // *Push(&fibs, arena) = 3;
+i64s test_slice(Arena* arena) {
+  {
+    i64s fibs = {0};
+    fibs = Slice(arena, fibs);
+    *Push(&fibs, arena) = 2;
+    *Push(&fibs, arena) = 3;
+  }
+
   int64_t data[] = {2, 3, 42};
-  arri64 fibs = {.data = data, .len = countof(data)};
+  i64s fibs = {.data = data, .len = countof(data)};
   fibs = Slice(arena, fibs, 0, 2);
   {
     Scratch(arena);
@@ -192,7 +195,7 @@ int main(int argc, const char* argv[]) {
   ShowCrashReports();
 #endif
 
-  enum { ARENA_SIZE = KB(1) };
+  enum { ARENA_SIZE = MB(1) };
 #ifdef OOM_COMMIT
   Arena arena[] = {arena_init(0, 0)};
 #else
@@ -215,7 +218,7 @@ int main(int argc, const char* argv[]) {
   test_pqueue(arena);
   ALOG(arena);
 
-  arri64 fibs = test_slice(arena);
+  i64s fibs = test_slice(arena);
   fibs.cap = 0;
   *Push(&fibs, arena) = 0;
   puts(">>>fibs");
