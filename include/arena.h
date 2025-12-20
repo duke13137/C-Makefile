@@ -29,29 +29,33 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef OOM_COMMIT
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
-
 #ifdef __GNUC__
-static void autofree_impl(void *p) {
-  free(*((void **)p));
-}
-#define autofree __attribute__((__cleanup__(autofree_impl)))
+#define ARENA_INLINE static inline __attribute__((always_inline))
 #else
-#warning "autofree is not supported on your compiler, use free()"
-#define autofree
+#define ARENA_INLINE static inline
 #endif
 
-// Branch optimization macros.
 #ifdef __GNUC__
 #define ARENA_LIKELY(xp)   __builtin_expect((bool)(xp), true)
 #define ARENA_UNLIKELY(xp) __builtin_expect((bool)(xp), false)
 #else
 #define ARENA_LIKELY(xp)   (xp)
 #define ARENA_UNLIKELY(xp) (xp)
+#endif
+
+#ifdef __has_feature
+  #if __has_feature(address_sanitizer)
+    #define ASAN_ENABLED
+  #endif
+#elif defined(__SANITIZE_ADDRESS__)
+  #define ASAN_ENABLED
+#endif
+
+#ifdef ASAN_ENABLED
+  #include <sanitizer/asan_interface.h>
+#else
+  #define ASAN_POISON_MEMORY_REGION(addr, size)   ((void)(addr), (void)(size))
+  #define ASAN_UNPOISON_MEMORY_REGION(addr, size) ((void)(addr), (void)(size))
 #endif
 
 #ifdef __clang__
@@ -79,6 +83,19 @@ static void autofree_impl(void *p) {
     }                           \
   } while (0)
 
+
+#ifdef __GNUC__
+static void autofree_impl(void *p) {
+  free(*((void **)p));
+}
+#define __autofree     __attribute__((__cleanup__(autofree_impl)))
+#define __arena_reset  __attribute__((__cleanup__(arena_reset_impl)))
+#else
+#warning "__autofree not supported!"
+#define __autofree
+#define __arena_reset
+#endif
+
 #define Min(a, b) ((a) < (b) ? (a) : (b))
 #define Max(a, b) ((a) > (b) ? (a) : (b))
 
@@ -89,7 +106,9 @@ static void autofree_impl(void *p) {
 
 typedef ptrdiff_t isize;
 
+#ifndef countof
 #define countof(arr) ((isize)(sizeof(arr) / sizeof((arr)[0])))
+#endif
 
 // - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66110
 // - https://software.codidact.com/posts/280966
@@ -100,7 +119,7 @@ struct Arena {
   byte *beg;
   byte *cur;
   byte *end;
-  jmp_buf *jmpbuf;
+  jmp_buf *oom;
 #ifdef OOM_COMMIT
   isize commit_size;
 #endif
@@ -158,11 +177,17 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
 
 #define CONCAT_(a, b) a##b
 #define CONCAT(a, b)  CONCAT_(a, b)
-#define ARENA_TMP     CONCAT(_arena_, __LINE__)
+#define ARENA_ORIG    CONCAT(_arena_, __LINE__)
 
-#define Scratch(arena)      \
-  Arena *ARENA_TMP = arena; \
-  Arena arena[] = {*ARENA_TMP}
+#define Scratch(arena)                     \
+  __arena_reset Arena ARENA_ORIG = *arena; \
+  Arena arena[] = {ARENA_ORIG}
+
+static void arena_reset_impl(Arena *a) {
+  // Poison the memory that was used inside the scratch block
+  // to catch pointers that "escaped" the block.
+  ASAN_POISON_MEMORY_REGION(a->cur, a->end - a->cur);
+}
 
 #define slice(T)     \
   struct slice_##T { \
@@ -171,16 +196,16 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
     isize cap;       \
   }
 
-#define Push(slice, arena)                                                          \
-  ({                                                                                \
-    Assert((slice)->len >= 0 && "slice.len must be non-negative");                  \
-    Assert((slice)->cap >= 0 && "slice.cap must be non-negative");                  \
-    Assert(!((slice)->len == 0 && (slice)->data != NULL) && "Invalid slice");       \
-    __auto_type _s = slice;                                                         \
-    if (_s->len >= _s->cap) {                                                       \
-      arena_slice((arena), _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
-    }                                                                               \
-    _s->data + _s->len++;                                                           \
+#define Push(slice, arena)                                                               \
+  ({                                                                                     \
+    Assert((slice)->len >= 0 && "slice.len must be non-negative");                       \
+    Assert((slice)->cap >= 0 && "slice.cap must be non-negative");                       \
+    Assert(!((slice)->len == 0 && (slice)->data != NULL) && "Invalid slice");            \
+    __auto_type _s = slice;                                                              \
+    if (_s->len >= _s->cap) {                                                            \
+      arena_slice_grow((arena), _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
+    }                                                                                    \
+    _s->data + _s->len++;                                                                \
   })
 
 #define Clone(...)                   _CloneX(__VA_ARGS__, _Clone4, _Clone3, _Clone2)(__VA_ARGS__)
@@ -203,84 +228,128 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
     _s;                                                                          \
   })
 
-// Ensures inlining if possible.
-#if defined(__GNUC__)
-#define ARENA_INLINE static inline __attribute__((always_inline))
-#else
-#define ARENA_INLINE static inline
-#endif
+
+#ifdef OOM_COMMIT
+
+#include <sys/mman.h>
+#include <unistd.h>
+static size_t arena_os_pagesize(void) {
+  return (size_t)sysconf(_SC_PAGESIZE);
+}
+static void* arena_os_reserve(size_t size) {
+  void* ptr = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return (ptr == MAP_FAILED) ? NULL : ptr;
+}
+static bool arena_os_commit(void* ptr, size_t size) {
+  return mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0;
+}
+static void arena_os_decommit(void* ptr, size_t size) {
+  madvise(ptr, size, POSIX_MADV_DONTNEED);
+}
 
 #ifndef ARENA_COMMIT_PAGE_COUNT
 #define ARENA_COMMIT_PAGE_COUNT 1024
 #endif
+#define ARENA_RESERVE_PAGE_COUNT (1024 * ARENA_COMMIT_PAGE_COUNT)
 
-#define ARENA_RESERVE_PAGE_COUNT (1000000 * ARENA_COMMIT_PAGE_COUNT)
+#endif
 
-ARENA_INLINE Arena arena_init(byte *mem, isize size) {
+ARENA_INLINE Arena arena_init(byte *buf, isize size) {
   Arena a = {0};
 #ifdef OOM_COMMIT
-  isize page_size = sysconf(_SC_PAGESIZE);
+  isize page_size = arena_os_pagesize();
   a.commit_size = page_size * ARENA_COMMIT_PAGE_COUNT;
   if (size == 0) {
     size = a.commit_size;
-    mem = mmap(mem, page_size * ARENA_RESERVE_PAGE_COUNT, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (mem == MAP_FAILED) {
+    buf = arena_os_reserve(page_size * ARENA_RESERVE_PAGE_COUNT);
+    if (!buf) {
       perror("arena_init mmap");
       Assert(!"arena_init mmap");
     }
-    Assert(!mprotect(mem, a.commit_size, PROT_READ | PROT_WRITE));
-  } else {
-    // assume mem + size already mapped and committed.
+    Assert(arena_os_commit(buf, a.commit_size));
   }
 #endif
-  a.beg = a.cur = mem;
-  a.end = mem ? mem + size : 0;
+  a.beg = a.cur = buf;
+  a.end = buf ? buf + size : 0;
+
+  ASAN_POISON_MEMORY_REGION(buf, size);
   return a;
 }
 
 ARENA_INLINE void arena_reset(Arena *arena) {
+  ASAN_POISON_MEMORY_REGION(arena->beg, arena->end - arena->beg);
   arena->cur = arena->beg;
 }
 
-#define ArenaOOM(arena, jmpbuf)   ((arena)->jmpbuf = &jmpbuf, setjmp(jmpbuf))
+// Safe multiplication using compiler intrinsics where available
+ARENA_INLINE bool arena_mul_overflow(size_t a, size_t b, isize *res) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_mul_overflow(a, b, res);
+#else
+    *res = a * b;
+    return (a != 0 && *res / a != b);
+#endif
+}
 
-static void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
-  Assert(arena != NULL && "arena cannot be NULL");
-  Assert(size > 0 && "size must be positive");
-  Assert(count > 0 && "count must be positive");
+#define ArenaOOM(arena, jmpbuf)   ((arena)->oom = &jmpbuf, setjmp(jmpbuf))
 
+static void *arena_alloc_grow(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
   byte *current = arena->cur;
   isize avail = arena->end - current;
   isize pad = -(uintptr_t)current & (align - 1);
-  while (ARENA_UNLIKELY(count >= (avail - pad) / size)) {
+
+  isize total_size;
+  if (ARENA_UNLIKELY(arena_mul_overflow(size, count, &total_size))) {
+      goto HANDLE_OOM;
+  }
+
+  while (count >= (avail - pad) / size) {
 #ifdef OOM_COMMIT
     // arena->commit_size == 0 if arena was malloced
     if (arena->commit_size) {
-      if (mprotect(arena->end, arena->commit_size, PROT_READ | PROT_WRITE) == -1) {
+      if (!arena_os_commit(arena->end, arena->commit_size)) {
         perror("arena_alloc mprotect");
         goto HANDLE_OOM;
       }
       arena->end += arena->commit_size;
       avail = arena->end - current;
+
+      ASAN_POISON_MEMORY_REGION(arena->end, arena->commit_size);
       continue;
     }
 #endif
     goto HANDLE_OOM;
   }
 
-  isize total_size = size * count;
   arena->cur += pad + total_size;
   current += pad;
+
+  ASAN_UNPOISON_MEMORY_REGION(current, total_size);
   return flags.mask & _NO_INIT ? current : memset(current, 0, total_size);
 
 HANDLE_OOM:
+  if (flags.mask & _OOM_NULL)
+    return NULL;
 #ifdef OOM_TRAP
   Assert(!OOM_TRAP);
 #endif
-  if (flags.mask & _OOM_NULL)
-    return NULL;
-  Assert(arena->jmpbuf && "not set by ArenaOOM");
-  longjmp(*arena->jmpbuf, 1);
+  Assert(arena->oom);
+  longjmp(*arena->oom, 1);
+}
+
+ARENA_INLINE void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
+  byte *current = arena->cur;
+  isize pad = -(uintptr_t)current & (align - 1);
+  isize avail = arena->end - current;
+  if (ARENA_LIKELY(count <= (avail - pad) / size)) {
+    isize total_size = size * count;
+    arena->cur += pad + total_size;
+    current += pad;
+    ASAN_UNPOISON_MEMORY_REGION(current, total_size);
+    return flags.mask & _NO_INIT ? current : memset(current, 0, total_size);
+  }
+
+  return arena_alloc_grow(arena, size, align, count, flags);
 }
 
 ARENA_INLINE void *arena_alloc_init(Arena *arena, isize size, isize align, isize count,
@@ -291,7 +360,7 @@ ARENA_INLINE void *arena_alloc_init(Arena *arena, isize size, isize align, isize
   return ptr;
 }
 
-ARENA_INLINE void arena_slice(Arena *arena, void *slice, isize size, isize align) {
+ARENA_INLINE void arena_slice_grow(Arena *arena, void *slice, isize size, isize align) {
   struct {
     void *data;
     isize len;
@@ -299,7 +368,7 @@ ARENA_INLINE void arena_slice(Arena *arena, void *slice, isize size, isize align
   } tmp;
   memcpy(&tmp, slice, sizeof(tmp));
 
-  enum { grow = 16 };
+  isize grow = 10 * size;
 
   if (tmp.cap == 0) {
     // move slice from stack
@@ -320,14 +389,16 @@ ARENA_INLINE void arena_slice(Arena *arena, void *slice, isize size, isize align
 }
 
 ARENA_INLINE void *arena_malloc(size_t size, Arena *arena) {
+  Assert(arena != NULL && "arena cannot be NULL");
   return arena_alloc(arena, size, _Alignof(max_align_t), 1, NO_INIT);
 }
 
 ARENA_INLINE void arena_free(void *ptr, size_t size, Arena *arena) {
   Assert(arena != NULL && "arena cannot be NULL");
-  if (!ptr)
-    return;
+  if (!ptr) return;
+
   if ((uintptr_t)ptr == (uintptr_t)arena->cur - size) {
+    ASAN_POISON_MEMORY_REGION(ptr, size);
     arena->cur = ptr;
   }
 }
@@ -391,13 +462,16 @@ static astr astr_format(Arena *arena, const char *format, ...) {
   int nbytes = vsnprintf(NULL, 0, format, args);
   va_end(args);
   Assert(nbytes >= 0);
+
   void *data = New(arena, char, nbytes + 1, NO_INIT);
   va_start(args, format);
   int nbytes2 = vsnprintf(data, nbytes + 1, format, args);
   va_end(args);
   Assert(nbytes2 == nbytes);
+
   // drop \0 so that astr_concat still works
   arena->cur--;
+
   return (astr){.data = data, .len = nbytes};
 }
 
@@ -496,7 +570,7 @@ ARENA_INLINE astr astr_trim(astr sv) {
 ARENA_INLINE uint64_t astr_hash(astr key) {
   uint64_t hash = 0xcbf29ce484222325ull;
   for (isize i = 0; i < key.len; i++)
-    hash = ((unsigned char)key.data[i] ^ hash) * 0x100000001b3ull;
+    hash = ((byte)key.data[i] ^ hash) * 0x100000001b3ull;
 
   return hash;
 }

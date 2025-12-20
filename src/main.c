@@ -41,28 +41,29 @@ astr test_astr(Arena* arena) {
 
     i = 0;
     for (astr_split_by_char(it, ",| $", s3, arena)) {
-      New(arena, long);
+      New(arena, char, MB(1));
       printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1, 10)));
       i++;
     }
     printf("num of token=%d\n", i);
 
-    autofree char* cs = astr_cstrdup(s3);
+    __autofree char* cs = astr_cstrdup(s3);
     for (char* p = cs; *p; ++p) {
-      *p += 30;
+      *p -= 1;
     }
     printf("test_astr: cs=%s\n", cs);
     ALOG(arena);
   }
 
   ALOG(arena);
-  return astr_clone(arena, s3);
+  return s3;
 }
 
 typedef slice(int64_t) i64s;
 
 i64s test_slice(Arena* arena) {
   {
+    Scratch(arena);
     i64s fibs = {0};
     fibs = Slice(arena, fibs);
     *Push(&fibs, arena) = 2;
@@ -73,8 +74,8 @@ i64s test_slice(Arena* arena) {
   i64s fibs = {.data = data, .len = countof(data)};
   fibs = Slice(arena, fibs, 0, 2);
   {
-    Scratch(arena);
-    for (int i = 2; i < 8; ++i) {
+    // Scratch(arena);
+    for (int i = 2; i < 9; ++i) {
       *Push(&fibs, arena) = fibs.data[i - 2] + fibs.data[i - 1];
     }
     ALOG(arena);
@@ -195,12 +196,12 @@ int main(int argc, const char* argv[]) {
   ShowCrashReports();
 #endif
 
-  enum { ARENA_SIZE = MB(1) };
 #ifdef OOM_COMMIT
   Arena arena[] = {arena_init(0, 0)};
 #else
-  autofree void* mem = malloc(ARENA_SIZE);
-  Arena arena[] = {arena_init(mem, ARENA_SIZE)};
+  enum { ARENA_SIZE = MB(1) };
+  __autofree void* buf = malloc(ARENA_SIZE);
+  Arena arena[] = {arena_init(buf, ARENA_SIZE)};
 #endif
 
   jmp_buf jmpbuf;
@@ -232,7 +233,7 @@ int main(int argc, const char* argv[]) {
   ALOG(arena);
 
   astr s = test_astr(arena);
-  printf("main: %.*s\n", S(s));
+  printf("main: %.*s\n", S(s)); // ASAN!
 
   ALOG(arena);
   struct point* p = test_init(*arena, 1.0, 2.0);
