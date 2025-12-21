@@ -119,7 +119,9 @@ struct Arena {
   byte *beg;
   byte *cur;
   byte *end;
+#ifndef OOM_TRAP
   jmp_buf *oom;
+#endif
 #ifdef OOM_COMMIT
   isize commit_size;
 #endif
@@ -291,7 +293,11 @@ ARENA_INLINE bool arena_mul_overflow(size_t a, size_t b, isize *res) {
 #endif
 }
 
+#ifndef OOM_TRAP
 #define ArenaOOM(arena, jmpbuf)   ((arena)->oom = &jmpbuf, setjmp(jmpbuf))
+#else
+#define ArenaOOM(arena, jmpbuf)   ((void)jmpbuf, false)
+#endif
 
 static void *arena_alloc_grow(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
   byte *current = arena->cur;
@@ -332,9 +338,11 @@ HANDLE_OOM:
     return NULL;
 #ifdef OOM_TRAP
   Assert(!OOM_TRAP);
-#endif
+#else
   Assert(arena->oom);
   longjmp(*arena->oom, 1);
+#endif
+  return NULL;
 }
 
 ARENA_INLINE void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
