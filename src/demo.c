@@ -2,6 +2,7 @@
 #include "arena.h"
 #include "cc.h"
 #include "debug.h"
+#include "utest.h"
 
 static inline void* vt_arena_malloc(size_t size, Arena** ctx) {
   return arena_malloc(size, *ctx);
@@ -25,7 +26,7 @@ static inline size_t astr_wyhash(astr key) {
 #define FREE_FN   vt_arena_free
 #include "verstable.h"
 
-void test_vt(Arena* arena) {
+Map_astr_astr test_vt(Arena* arena) {
   ALOG(arena);
 
   Map_astr_astr mymap;
@@ -37,6 +38,16 @@ void test_vt(Arena* arena) {
     vt_insert(&mymap, k, v);
   }
 
+  ALOG(arena);
+  return mymap;
+}
+
+UTEST(Map, astr) {
+  enum { size = KB(1) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+  Map_astr_astr mymap = test_vt(arena);
+
   for (int i = 0; i < 100; ++i) {
     astr k = astr_format(arena, "key-%d", i);
     Map_astr_astr_itr it = vt_get(&mymap, k);
@@ -45,10 +56,6 @@ void test_vt(Arena* arena) {
     }
     printf("%.*s found %.*s!\n", S(it.data->key), S(it.data->val));
   }
-
-  ALOG(arena);
-  vt_cleanup(&mymap);
-  ALOG(arena);
 }
 
 #define BGEN_NAME   max_priority_queue
@@ -65,92 +72,45 @@ void test_vt(Arena* arena) {
 #define BGEN_FREE   arena_free(ptr, size, udata);
 #include "bgen.h"
 
-int test_pqueue(Arena* arena) {
-  {
-    Scratch(arena);
-    int data[] = {1, 8, 5, 6, 3, 4, 0, 9, 7, 2};
-    int n = sizeof(data) / sizeof(int);
-    printf("\ndata: ");
-    for (int i = 0; i < n; i++) {
-      printf("%d ", data[i]);
-    }
-    printf("\n");
+int test_pqueue(Arena a) {
+  Arena arena[] = {a};
 
-    struct max_priority_queue* max_priority_queue = 0;
-
-    // Fill the priority queue.
-    for (int i = 0; i < n; i++) {
-      max_priority_queue_insert(&max_priority_queue, data[i], 0, arena);
-    }
-
-    printf("max_priority_queue: ");
-    while (max_priority_queue_count(&max_priority_queue, 0) > 0) {
-      int val = 0;
-      max_priority_queue_pop_front(&max_priority_queue, &val, arena);
-      printf("%d ", val);
-    }
-    printf("\n");
-
-    struct min_priority_queue* min_priority_queue = 0;
-
-    // Fill the priority queue.
-    for (int i = 0; i < n; i++) {
-      min_priority_queue_insert(&min_priority_queue, data[i], 0, arena);
-    }
-
-    printf("min_priority_queue: ");
-    while (min_priority_queue_count(&min_priority_queue, 0) > 0) {
-      int val = 0;
-      min_priority_queue_pop_front(&min_priority_queue, &val, arena);
-      printf("%d ", val);
-    }
-    printf("\n");
+  int data[] = {1, 8, 5, 6, 3, 4, 0, 9, 7, 2};
+  int n = sizeof(data) / sizeof(int);
+  printf("data: ");
+  for (int i = 0; i < n; i++) {
+    printf("%d ", data[i]);
   }
+  printf("\n");
+
+  struct max_priority_queue* max_priority_queue = 0;
+
+  // Fill the priority queue.
+  for (int i = 0; i < n; i++) {
+    max_priority_queue_insert(&max_priority_queue, data[i], 0, arena);
+  }
+
+  printf("max_priority_queue: ");
+  while (max_priority_queue_count(&max_priority_queue, 0) > 0) {
+    int val = 0;
+    max_priority_queue_pop_front(&max_priority_queue, &val, arena);
+    printf("%d ", val);
+  }
+  printf("\n");
+
+  struct min_priority_queue* min_priority_queue = 0;
+
+  // Fill the priority queue.
+  for (int i = 0; i < n; i++) {
+    min_priority_queue_insert(&min_priority_queue, data[i], 0, arena);
+  }
+
+  printf("min_priority_queue: ");
+  while (min_priority_queue_count(&min_priority_queue, 0) > 0) {
+    int val = 0;
+    min_priority_queue_pop_front(&min_priority_queue, &val, arena);
+    printf("%d ", val);
+  }
+  printf("\n");
   return 0;
-}
-
-// No need to define a hash, comparison, or destructor function for CC strings here as these
-// functions are defined by default.
-
-int test_string(void) {
-  int err = 0;
-  map(str(char), str(char)) our_map;
-  init(&our_map);
-
-  // Regular insertion of CC strings.
-  str(char) our_str_key;
-  str(char) our_str_el;
-  init(&our_str_key);
-  init(&our_str_el);
-
-  if (!push_fmt(&our_str_key, "France") || !push_fmt(&our_str_el, "Paris") ||
-      !insert(&our_map, our_str_key, our_str_el)) {
-    // Out of memory, so abort.
-    // This requires cleaning up the strings, too, since they were not inserted and the map therefore
-    // did not take ownership of them.
-    cleanup(&our_str_key);
-    cleanup(&our_str_el);
-    err = -1;
-    goto CLEANUP;
-  }
-
-  // Heterogeneous insertion of C strings.
-  // CC automatically creates CC strings (and cleans them up if the operation fails).
-  if (!insert(&our_map, "Japan", "Tokyo")) {
-    err = -1;
-    goto CLEANUP;
-  }
-
-  // Heterogeneous lookup using a C string.
-  // This requires no dynamic memory allocations.
-  str(char)* el = get(&our_map, "France");
-  puts(first(el));
-
-  el = get(&our_map, "Japan");
-  puts(first(el));
-
-CLEANUP:
-  cleanup(&our_map);
-
-  return err;
 }

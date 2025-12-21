@@ -13,12 +13,13 @@
 #include "utest.h"
 UTEST_STATE();
 
-astr test_astr(Arena* arena) {
-  ALOG(arena);
-  astr s3 = {0};
-
+astr test_astr(Arena arena[static 1]) {
   {
     Scratch(arena);
+
+    ALOG(arena);
+    astr s3 = {0};
+
     ALOG(arena);
 
     astr s = {0};
@@ -41,22 +42,15 @@ astr test_astr(Arena* arena) {
 
     i = 0;
     for (astr_split_by_char(it, ",| $", s3, arena)) {
-      New(arena, char, MB(1));
+      New(arena, char, KB(4));
       printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1, 10)));
       i++;
     }
     printf("num of token=%d\n", i);
 
-    __autofree char* cs = astr_cstrdup(s3);
-    for (char* p = cs; *p; ++p) {
-      *p -= 1;
-    }
-    printf("test_astr: cs=%s\n", cs);
     ALOG(arena);
+    return s3;
   }
-
-  ALOG(arena);
-  return s3;
 }
 
 typedef slice(int64_t) i64s;
@@ -64,15 +58,15 @@ typedef slice(int64_t) i64s;
 i64s test_slice(Arena* arena) {
   {
     Scratch(arena);
-    i64s fibs = {0};
-    fibs = Slice(arena, fibs);
+    slice(int) fibs = {0};
+    fibs = Clone(arena, fibs);
     *Push(&fibs, arena) = 2;
     *Push(&fibs, arena) = 3;
   }
 
   int64_t data[] = {2, 3, 42};
   i64s fibs = {.data = data, .len = countof(data)};
-  fibs = Slice(arena, fibs, 0, 2);
+  fibs = Clone(arena, fibs, 0, 2);
   {
     // Scratch(arena);
     for (int i = 2; i < 9; ++i) {
@@ -151,19 +145,17 @@ struct point {
   double y;
 };
 
-struct point* test_init(Arena a, double x, double y) {
-  {
-    struct point* p = New(&a, struct point);
-    p->x = x;
-    p->y = y;
-    return p;
-  }
+struct point* test_init(Arena* a, double x, double y) {
+  struct point* p = New(a, struct point);
+  p->x = x;
+  p->y = y;
+  return p;
 }
 
 #include "adt.h"
 
 UTEST(stc, adt) {
-  enum { size = KB(1) };
+  enum { size = MB(1) };
   byte mem[size] = {0};
   Arena arena[] = {arena_init(mem, size)};
   ASSERT_EQ(15, tree_sum(mkTree(arena)));
@@ -210,13 +202,9 @@ int main(int argc, const char* argv[]) {
     exit(1);
   }
 
-  int test_string();
-  test_string();
-  test_vec();
-
   ALOG(arena);
-  int test_pqueue(Arena * arena);
-  test_pqueue(arena);
+  int test_pqueue(Arena arena);
+  test_pqueue(*arena);
   ALOG(arena);
 
   i64s fibs = test_slice(arena);
@@ -227,18 +215,26 @@ int main(int argc, const char* argv[]) {
     printf("%ld,", fibs.data[i]);
   puts("<<<fibs");
 
-  int test_vt(Arena * arena);
-  ALOG(arena);
-  test_vt(arena);
-  ALOG(arena);
-
   astr s = test_astr(arena);
-  printf("main: %.*s\n", S(s)); // ASAN!
+  printf("test_astr: %.*s\n", S(s));
+
+  // char* cs = astr_to_cstr(*arena, s);
+  __autofree char* cs = astr_cstrdup(s);
+  for (char* p = cs; *p; ++p) {
+    char c = *p;
+    if (c >= 'a' && c <= 'z') {
+      *p -= 'a' - 'A';
+    }
+  }
+  printf("astr_to_cstr: %s\n", cs);
+  ALOG(arena);
 
   ALOG(arena);
-  struct point* p = test_init(*arena, 1.0, 2.0);
+  struct point* p = test_init(arena, 1.0, 2.0);
   struct point* p2 = New(arena, struct point, 1, p);
   ULOG(p2);
+  p2->x += 10;
+  ULOG(p);
   ALOG(arena);
 
   return utest_main(argc, argv);
