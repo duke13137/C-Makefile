@@ -237,5 +237,9 @@ int main(int argc, const char* argv[]) {
   ULOG(p);
   ALOG(arena);
 
+#ifdef OOM_COMMIT
+  arena_os_decommit(arena->beg, arena->end - arena->beg);
+#endif
+
   return utest_main(argc, argv);
 }

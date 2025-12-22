@@ -25,7 +25,7 @@ DEP := $(OBJ:.o=.d)
 WARN = -Wall -Wextra -Wvla -Wno-unused-parameter -Wno-unused-function -Wno-format-security
 SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
-CPPFLAGS += -I./include -I../STC/include
+CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE
 CFLAGS   += -MMD -MP $(WARN)
 
 .PHONY: debug release
