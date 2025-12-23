@@ -241,10 +241,10 @@ static void arena_reset_scratch(Arena *a) {
  */
 #define Push(slice, arena)                                                               \
   ({                                                                                     \
-    Assert((slice)->len >= 0 && "slice.len must be non-negative");                       \
-    Assert((slice)->cap >= 0 && "slice.cap must be non-negative");                       \
-    Assert(!((slice)->len == 0 && (slice)->data != NULL) && "Invalid slice");            \
-    __auto_type _s = slice;                                                              \
+    __auto_type _s = (slice);                                                            \
+    Assert(_s->len >= 0 && "slice.len must be non-negative");                            \
+    Assert(_s->cap >= 0 && "slice.cap must be non-negative");                            \
+    Assert(!(_s->len == 0 && _s->data != NULL) && "Invalid slice");                      \
     if (_s->len >= _s->cap) {                                                            \
       arena_slice_grow((arena), _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
     }                                                                                    \
@@ -403,10 +403,10 @@ static void *arena_alloc_grow(Arena *arena, isize size, isize align, isize count
         perror("arena_alloc mprotect");
         goto HANDLE_OOM;
       }
+      ASAN_POISON_MEMORY_REGION(arena->end, arena->commit_size);
       arena->end += arena->commit_size;
       avail = arena->end - current;
 
-      ASAN_POISON_MEMORY_REGION(arena->end, arena->commit_size);
       continue;
     }
 #endif
@@ -443,6 +443,10 @@ HANDLE_OOM:
  * @return Pointer to allocated memory
  */
 ARENA_INLINE void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
+  Assert(size > 0 && "size must be positive");
+  Assert(count >= 0 && "count must be non-negative");
+  Assert((align & (align - 1)) == 0 && "align must be power of 2");
+
   byte *current = arena->cur;
   isize pad = -(uintptr_t)current & (align - 1);
   isize avail = arena->end - current;
@@ -485,20 +489,20 @@ ARENA_INLINE void arena_slice_grow(Arena *arena, void *slice, isize size, isize 
   } tmp;
   memcpy(&tmp, slice, sizeof(tmp));
 
-  isize grow = 10 * size;
+  enum { GROW = 16 };
 
   if (tmp.cap == 0) {
     // Move slice from stack to arena
-    tmp.cap = tmp.len + grow;
+    tmp.cap = tmp.len + GROW;
     void *ptr = arena_alloc(arena, size, align, tmp.cap, NO_INIT);
     tmp.data = tmp.len == 0 ? ptr : memmove(ptr, tmp.data, size * tmp.len);
   } else if (ARENA_LIKELY((uintptr_t)tmp.data == (uintptr_t)arena->cur - size * tmp.cap)) {
     // Slice is at arena tip - grow in place
-    tmp.cap += grow;
-    arena_alloc(arena, size, 1, grow, NO_INIT);
+    tmp.cap += GROW;
+    arena_alloc(arena, size, 1, GROW, NO_INIT);
   } else {
     // Slice is not at tip - must reallocate
-    tmp.cap += Max(tmp.cap / 2, grow);
+    tmp.cap += Max(tmp.cap / 2, GROW);
     void *ptr = arena_alloc(arena, size, align, tmp.cap, NO_INIT);
     tmp.data = memmove(ptr, tmp.data, size * tmp.len);
   }

@@ -29,7 +29,7 @@ CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE
 CFLAGS   += -MMD -MP $(WARN)
 
 .PHONY: debug release
-debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP
+debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP -DDEFAULT_ARENA_SIZE=64000
 debug: LDFLAGS += $(SANZ)
 debug: $(BIN_TARGET)
 
