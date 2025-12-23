@@ -6,16 +6,103 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/types.h>
-
-#define ARENA_COMMIT_PAGE_COUNT 4
 #include "arena.h"
 #include "debug.h"
 #include "utest.h"
 UTEST_STATE();
 
+/* --- Default Thread-Local Arena --- */
+
+#ifndef DEFAULT_ARENA_SIZE
+#define DEFAULT_ARENA_SIZE MB(64)
+#endif
+
+// Thread-local default arena
+__thread Arena* default_arena = NULL;
+
+#ifndef OOM_COMMIT
+__thread void* default_arena_mem = NULL;
+#endif
+
+/**
+ * Get the default arena, initializing it on first use.
+ *
+ * Usage:
+ *   Arena *a = arena_default();
+ *   char *s = New(a, char, 100);
+ */
+static inline Arena* arena_default(void) {
+  if (default_arena) {
+    return default_arena;
+  }
+
+#ifdef OOM_COMMIT
+  static __thread Arena storage = {0};
+  storage = arena_init(NULL, 0);
+  default_arena = &storage;
+#else
+  default_arena_mem = malloc(DEFAULT_ARENA_SIZE);
+  if (!default_arena_mem) {
+    perror("arena_default malloc");
+    abort();
+  }
+
+  static __thread Arena storage = {0};
+  storage = arena_init(default_arena_mem, DEFAULT_ARENA_SIZE);
+  default_arena = &storage;
+#endif
+
+  return default_arena;
+}
+
+/**
+ * Reset the default arena to reclaim all memory.
+ * Call this when you're done with temporary allocations.
+ *
+ * Usage:
+ *   Arena *a = arena_default();
+ *   // ... do work ...
+ *   arena_default_reset();
+ */
+static inline void arena_default_reset(void) {
+  if (default_arena) {
+    arena_reset(default_arena);
+  }
+}
+
+/**
+ * Save the current state of the default arena.
+ * Returns a snapshot that can be restored later.
+ *
+ * Usage:
+ *   Arena snapshot = arena_default_snapshot();
+ *   // ... temporary allocations ...
+ *   arena_default_restore(snapshot);
+ */
+static inline Arena arena_default_snapshot(void) {
+  Arena* a = arena_default();
+  return *a;
+}
+
+/**
+ * Restore the default arena to a previous snapshot.
+ * Frees all allocations made after the snapshot.
+ *
+ * Usage:
+ *   Arena snap = arena_default_snapshot();
+ *   char *temp = New(arena_default(), char, 100);
+ *   arena_default_restore(snap);  // temp is now invalid
+ */
+static inline void arena_default_restore(Arena snapshot) {
+  if (default_arena) {
+    ASAN_POISON_MEMORY_REGION(snapshot.cur, default_arena->end - snapshot.cur);
+    default_arena->cur = snapshot.cur;
+  }
+}
+
 astr test_astr(Arena arena[static 1]) {
   {
-    Scratch(arena);
+    // Scratch(arena);
 
     ALOG(arena);
     astr s3 = {0};
@@ -42,7 +129,6 @@ astr test_astr(Arena arena[static 1]) {
 
     i = 0;
     for (astr_split_by_char(it, ",| $", s3, arena)) {
-      New(arena, char, KB(4));
       printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1, 10)));
       i++;
     }
@@ -188,13 +274,7 @@ int main(int argc, const char* argv[]) {
   ShowCrashReports();
 #endif
 
-#ifdef OOM_COMMIT
-  Arena arena[] = {arena_init(0, 0)};
-#else
-  enum { ARENA_SIZE = MB(1) };
-  __autofree void* buf = malloc(ARENA_SIZE);
-  Arena arena[] = {arena_init(buf, ARENA_SIZE)};
-#endif
+  Arena* arena = arena_default();
 
   jmp_buf jmpbuf;
   if (ArenaOOM(arena, jmpbuf)) {
@@ -221,6 +301,7 @@ int main(int argc, const char* argv[]) {
   // char* cs = astr_to_cstr(*arena, s);
   __autofree char* cs = astr_cstrdup(s);
   for (char* p = cs; *p; ++p) {
+    New(arena, char, MB(1), OOM_NULL);
     char c = *p;
     if (c >= 'a' && c <= 'z') {
       *p -= 'a' - 'A';
