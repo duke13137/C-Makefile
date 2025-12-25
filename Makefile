@@ -25,11 +25,11 @@ DEP := $(OBJ:.o=.d)
 WARN = -Wall -Wextra -Wvla -Wno-unused-parameter -Wno-unused-function -Wno-format-security
 SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
-CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE
+CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=1000000000
 CFLAGS   += -MMD -MP $(WARN)
 
 .PHONY: debug release
-debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP -DDEFAULT_ARENA_SIZE=64000
+debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP
 debug: LDFLAGS += $(SANZ)
 debug: $(BIN_TARGET)
 

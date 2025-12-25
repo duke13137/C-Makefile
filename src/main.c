@@ -38,7 +38,7 @@ static inline Arena* arena_default(void) {
 
 #ifdef OOM_COMMIT
   static __thread Arena storage = {0};
-  storage = arena_init(NULL, 0);
+  storage = arena_init(NULL, DEFAULT_ARENA_SIZE);
   default_arena = &storage;
 #else
   default_arena_mem = malloc(DEFAULT_ARENA_SIZE);
@@ -151,16 +151,28 @@ i64s test_slice(Arena* arena) {
   }
 
   int64_t data[] = {2, 3, 42};
-  i64s fibs = {.data = data, .len = countof(data)};
-  fibs = Clone(arena, fibs, 0, 2);
+  i64s fibs = {.data = data, .len = Countof(data)};
   {
-    // Scratch(arena);
+    Scratch(arena);
+    fibs = Clone(arena, fibs, 0, 2);
     for (int i = 2; i < 9; ++i) {
       *Push(&fibs, arena) = fibs.data[i - 2] + fibs.data[i - 1];
     }
+
+    ALOG(arena);
+    getc(stdin);
+    while (1) {
+      char* p = New(arena, char, GB(1), OOM_NULL);
+      if (!p) {
+        puts("!!! OOM break !!!");
+        break;
+      }
+    }
+    getc(stdin);
     ALOG(arena);
   }
   ALOG(arena);
+  getc(stdin);
 
   return fibs;
 }
@@ -278,7 +290,7 @@ int main(int argc, const char* argv[]) {
 
   jmp_buf jmpbuf;
   if (ArenaOOM(arena, jmpbuf)) {
-    fputs("!!! OOM_DIE !!!\n", stderr);
+    fputs("!!! OOM exit !!!\n", stderr);
     exit(1);
   }
 
@@ -308,7 +320,6 @@ int main(int argc, const char* argv[]) {
     }
   }
   printf("astr_to_cstr: %s\n", cs);
-  ALOG(arena);
 
   ALOG(arena);
   struct point* p = test_init(arena, 1.0, 2.0);
@@ -318,9 +329,9 @@ int main(int argc, const char* argv[]) {
   ULOG(p);
   ALOG(arena);
 
-#ifdef OOM_COMMIT
-  arena_os_decommit(arena->beg, arena->end - arena->beg);
-#endif
+  getc(stdin);
+  arena_release(arena);
+  getc(stdin);
 
   return utest_main(argc, argv);
 }

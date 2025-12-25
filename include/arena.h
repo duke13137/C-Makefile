@@ -1,18 +1,15 @@
 /**
  * @file arena.h
- * @brief A fast, region-based memory allocator with optional commit-on-demand support.
+ * @brief Fast region-based memory allocator with optional commit-on-demand.
  *
- * This arena allocator provides a simple, efficient way to manage memory in a contiguous
- * region. It supports both immediate allocation and commit-on-demand via mmap (when
- * OOM_COMMIT is defined). Key features:
- * - Fast allocation with minimal overhead
- * - Optional zero-initialization
- * - slice and string utilities
+ * Provides bump-pointer allocation in a contiguous memory region with:
+ * - Fast O(1) allocation with minimal overhead
+ * - Optional zero-initialization and lazy commit (mmap)
+ * - String utilities (astr) and dynamic arrays (slice)
  * - OOM handling via setjmp/longjmp or NULL return
  *
- * Credit:
- * - https://nullprogram.com/blog/2023/09/27/
- * - https://nullprogram.com/blog/2023/10/05/
+ * @see https://nullprogram.com/blog/2023/09/27/
+ * @see https://nullprogram.com/blog/2023/10/05/
  */
 
 #ifndef ARENA_H_
@@ -28,6 +25,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define AlignPow2(x,b)     (((x) + (b) - 1) & (~((b) - 1)))
+#define AlignDownPow2(x,b) ((x) & (~((b) - 1)))
+#define AlignPadPow2(x,b)  (-(x) & ((b) - 1))
+#define IsPow2(x)          ((x)!=0 && ((x)&((x)-1))==0)
+#define IsPow2OrZero(x)    ((((x)-1)&(x)) == 0)
+
+#define Countof(arr)       ((isize)(sizeof(arr) / sizeof((arr)[0])))
+
+#define Min(a, b) ((a) < (b) ? (a) : (b))
+#define Max(a, b) ((a) > (b) ? (a) : (b))
+
+#define KB(n) (((size_t)(n)) << 10)
+#define MB(n) (((size_t)(n)) << 20)
+#define GB(n) (((size_t)(n)) << 30)
+#define TB(n) (((size_t)(n)) << 40)
+
 #ifdef __GNUC__
 #define ARENA_INLINE static inline __attribute__((always_inline))
 #else
@@ -42,7 +55,7 @@
 #define ARENA_UNLIKELY(xp) (xp)
 #endif
 
-// Detect Address Sanitizer for memory poisoning support
+// Detect Address Sanitizer support
 #ifdef __has_feature
   #if __has_feature(address_sanitizer)
     #define ASAN_ENABLED
@@ -58,7 +71,7 @@
   #define ASAN_UNPOISON_MEMORY_REGION(addr, size) ((void)(addr), (void)(size))
 #endif
 
-// Platform-specific debug trap implementations
+// Platform-specific debug breakpoint
 #ifdef __clang__
 #define DEBUG_TRAP() __builtin_debugtrap();
 #elif defined(__x86_64__)
@@ -77,8 +90,10 @@
 #endif
 
 /**
- * Assert with debug trap on failure.
- * In release builds, still checks and traps (not compiled out).
+ * @brief Runtime assertion with debug trap on failure.
+ * @param c Condition to check
+ * 
+ * Unlike standard assert(), this is not compiled out in release builds.
  */
 #define Assert(c)               \
   do {                          \
@@ -88,69 +103,80 @@
     }                           \
   } while (0)
 
+#ifdef OOM_COMMIT
+#include <sys/mman.h>
+#include <unistd.h>
 
-#ifdef __GNUC__
-// Cleanup function for __autofree attribute
-static void autofree_impl(void *p) {
-  free(*((void **)p));
+// Pages to commit at once when growing arena (default 1MB on 4KB pages)
+#ifndef ARENA_COMMIT_PAGE_COUNT
+#define ARENA_COMMIT_PAGE_COUNT  256
+#endif
+
+// @return System page size in bytes
+ARENA_INLINE size_t arena_os_pagesize(void) {
+  return (size_t)sysconf(_SC_PAGESIZE);
 }
+
 /**
- * Automatically free pointer when it goes out of scope.
- * Usage: __autofree void *ptr = malloc(size);
+ * @brief Reserve virtual address space without physical memory.
+ * @param size Bytes to reserve
+ * @return Pointer to reserved space, or NULL on failure
  */
-#define __autofree     __attribute__((__cleanup__(autofree_impl)))
+ARENA_INLINE void* arena_os_reserve(size_t size) {
+  void* ptr = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return (ptr == MAP_FAILED) ? NULL : ptr;
+}
+
 /**
- * Automatically reset arena when it goes out of scope.
- * Used internally by Scratch() macro.
+ * @brief Commit physical memory to reserved pages.
+ * @param ptr Start of reserved region
+ * @param size Bytes to commit
+ * @return true on success, false on failure
  */
-#define __arena_reset  __attribute__((__cleanup__(arena_reset_scratch)))
-#else
-#warning "__autofree not supported!"
-#define __autofree
-#define __arena_reset
+ARENA_INLINE bool arena_os_commit(void* ptr, size_t size) {
+  return mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0;
+}
+
+/**
+ * @brief Release physical memory while keeping virtual reservation.
+ * @param ptr Start of committed region
+ * @param size Bytes to decommit
+ */
+ARENA_INLINE void arena_os_decommit(void* ptr, size_t size) {
+  if (size > 0) {
+    madvise(ptr, size, MADV_DONTNEED);
+    mprotect(ptr, size, PROT_NONE);
+  }
+}
 #endif
 
-#define Min(a, b) ((a) < (b) ? (a) : (b))
-#define Max(a, b) ((a) > (b) ? (a) : (b))
-
-// Size literals for readability
-#define KB(n) (((size_t)(n)) << 10)
-#define MB(n) (((size_t)(n)) << 20)
-#define GB(n) (((size_t)(n)) << 30)
-#define TB(n) (((size_t)(n)) << 40)
-
-typedef ptrdiff_t isize;
-
-#ifndef countof
-#define countof(arr) ((isize)(sizeof(arr) / sizeof((arr)[0])))
-#endif
-
-// Use unsigned char instead of uint8_t to avoid strict aliasing issues
 typedef unsigned char byte;
+typedef ptrdiff_t isize;  // Signed size type for pointer arithmetic
 
 /**
- * Arena allocator context.
- * Tracks a contiguous memory region with bump-pointer allocation.
+ * @brief Arena allocator context.
+ * 
+ * Manages contiguous memory region with bump-pointer allocation.
+ * All fields are internal - use provided functions/macros.
  */
 typedef struct Arena Arena;
 struct Arena {
   byte *beg;  // Start of arena memory
-  byte *cur;  // Current allocation position (bump pointer)
+  byte *cur;  // Current allocation position
   byte *end;  // End of committed memory
 #ifndef OOM_TRAP
-  jmp_buf *oom;  // support longjmp OOM recovery
+  jmp_buf *oom;  // Longjmp target for OOM recovery
 #endif
 #ifdef OOM_COMMIT
-  isize commit_size;  // Size of each commit chunk
+  isize commit_size;   // Bytes to commit per growth
+  isize reserve_size;  // Total reserved virtual space
 #endif
 };
 
-/**
- * Allocation flags.
- */
+// Allocation flags
 enum {
-  _NO_INIT = 1u << 0,   // Don't zero-initialize allocated memory
-  _OOM_NULL = 1u << 1,  // Return NULL on OOM
+  _NO_INIT = 1u << 0,   // Skip zero-initialization
+  _OOM_NULL = 1u << 1,  // Return NULL on OOM instead of longjmp
 };
 
 typedef struct {
@@ -160,31 +186,31 @@ typedef struct {
 static const ArenaFlag NO_INIT = {_NO_INIT};
 static const ArenaFlag OOM_NULL = {_OOM_NULL};
 
+#ifdef __GNUC__
 /**
- * Basic usage example:
+ * Auto-free pointer when leaving scope.
  *
- * #define ARENA_SIZE MB(128)
- *
- * #ifdef OOM_COMMIT
- *   Arena arena[] = { arena_init(0, 0) };
- * #else
- *   __autofree void *mem = malloc(ARENA_SIZE);
- *   Arena arena[] = { arena_init(mem, ARENA_SIZE) };
- * #endif
- *
- * jmp_buf jmpbuf;
- * if (ArenaOOM(arena, jmpbuf)) {
- *   abort();
- * }
- *
+ * Usage:
+ *   __autofree void *ptr = malloc(size);
+ *   // ptr freed automatically on scope exit
  */
+#define __autofree     __attribute__((__cleanup__(autofree_impl)))
+static void autofree_impl(void *p) {
+  free(*((void **)p));
+}
+#else
+#warning "__autofree not supported on this compiler"
+#define __autofree
+#endif
 
 /**
- * Allocate memory for type T.
- * New(arena, T)           - Single zeroed object
- * New(arena, T, n)        - Array of n zeroed objects
- * New(arena, T, n, flag)  - Array with flag (NO_INIT or OOM_NULL)
- * New(arena, T, n, init)  - Array initialized by copying from init pointer
+ * Allocate memory for type T from arena.
+ *
+ * Usage:
+ *   int *x = New(arena, int);                  // Single zeroed int
+ *   int *arr = New(arena, int, 10);            // Array of 10 zeroed ints
+ *   int *arr2 = New(arena, int, 10, NO_INIT);  // Uninitialized
+ *   struct point *p2 = New(arena, struct point, 1, p);  // Copy from p
  */
 #define New(...)                  _NEWX(__VA_ARGS__, _NEW4, _NEW3, _NEW2)(__VA_ARGS__)
 #define _NEWX(a, b, c, d, e, ...) e
@@ -203,6 +229,7 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
 
 /**
  * Create a temporary arena scope.
+ *
  * Arena state is automatically restored when scope exits.
  * Pointers allocated in this scope must not escape it.
  *
@@ -213,20 +240,31 @@ static const ArenaFlag OOM_NULL = {_OOM_NULL};
  *     // use temp...
  *   } // arena reset here
  */
-#define Scratch(arena)                     \
-  __arena_reset Arena ARENA_ORIG = *arena; \
-  Arena arena[] = {ARENA_ORIG}
+#define Scratch(arena)                       \
+  __arena_restore Arena *ARENA_ORIG = arena; \
+  Arena arena[] = {*ARENA_ORIG}
 
-// Cleanup implementation for Scratch() - use ASAN to catch escaping pointers
-static void arena_reset_scratch(Arena *a) {
-  ASAN_POISON_MEMORY_REGION(a->cur, a->end - a->cur);
+#ifdef __GNUC__
+#define __arena_restore  __attribute__((__cleanup__(arena_restore)))
+#else
+#define __arena_restore
+#endif
+
+static void arena_restore(Arena **a) {
+  ASAN_POISON_MEMORY_REGION(a[0]->cur, a[0]->end - a[0]->cur);
+#ifdef OOM_COMMIT
+  if (a[0]->commit_size) {
+    isize orig_size = a[0]->end - a[0]->beg;
+    arena_os_decommit(a[0]->end, a[0]->reserve_size - orig_size);
+  }
+#endif
 }
 
 /**
  * Define a dynamic array type.
+ *
  * Usage:
- *   slice(int) my_array = {0};
- *   int *item = Push(&my_array, arena);
+ *   typedef slice(long) i64s;
  */
 #define slice(T)     \
   struct slice_##T { \
@@ -237,7 +275,13 @@ static void arena_reset_scratch(Arena *a) {
 
 /**
  * Append an element to a slice, growing if needed.
- * Returns pointer to the new element (uninitialized).
+ *
+ * Returns pointer to the new uninitialized element.
+ *
+ * Usage:
+ *   i64s fibs = {0};
+ *   *Push(&fibs, arena) = 2;
+ *   *Push(&fibs, arena) = 3;
  */
 #define Push(slice, arena)                                                               \
   ({                                                                                     \
@@ -253,9 +297,10 @@ static void arena_reset_scratch(Arena *a) {
 
 /**
  * Clone a slice (or subslice) into arena memory.
- * Clone(arena, slice)              - Full slice
- * Clone(arena, slice, start)       - From start to end
- * Clone(arena, slice, start, len)  - Subslice of length len
+ *
+ * Usage:
+ *   fibs = Clone(arena, fibs);           // Full copy
+ *   fibs = Clone(arena, fibs, 0, 2);     // First 2 elements
  */
 #define Clone(...)                   _CloneX(__VA_ARGS__, _Clone4, _Clone3, _Clone2)(__VA_ARGS__)
 #define _CloneX(a, b, c, d, e, ...)  e
@@ -277,62 +322,38 @@ static void arena_reset_scratch(Arena *a) {
     _s;                                                                          \
   })
 
-
-#ifdef OOM_COMMIT
-
-#include <sys/mman.h>
-#include <unistd.h>
-
-// Get system page size
-static size_t arena_os_pagesize(void) {
-  return (size_t)sysconf(_SC_PAGESIZE);
-}
-
-// Reserve virtual address space without committing physical memory
-static void* arena_os_reserve(size_t size) {
-  void* ptr = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  return (ptr == MAP_FAILED) ? NULL : ptr;
-}
-
-// Commit physical memory to reserved pages
-static bool arena_os_commit(void* ptr, size_t size) {
-  return mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0;
-}
-
-// Release committed physical memory (keep virtual reservation)
-static void arena_os_decommit(void* ptr, size_t size) {
-  madvise(ptr, size, MADV_DONTNEED);
-  mprotect(ptr, size, PROT_NONE);
-}
-
-#ifndef ARENA_COMMIT_PAGE_COUNT
-#define ARENA_COMMIT_PAGE_COUNT 1024
-#endif
-#define ARENA_RESERVE_PAGE_COUNT (1024 * ARENA_COMMIT_PAGE_COUNT)
-
-#endif
-
 /**
  * Initialize an arena allocator.
  *
- * @param buf  Pointer to memory buffer (or NULL with OOM_COMMIT)
- * @param size Size of buffer in bytes (or 0 with OOM_COMMIT)
- * @return Initialized arena
+ * Usage:
+ *   // Static allocation
+ *   void *mem = malloc(MB(64));
+ *   Arena arena = arena_init(mem, MB(64));
+ *
+ *   // Commit-on-demand (with OOM_COMMIT defined)
+ *   Arena arena = arena_init(NULL, GB(4));
  */
 ARENA_INLINE Arena arena_init(byte *buf, isize size) {
   Arena a = {0};
 #ifdef OOM_COMMIT
-  // With commit-on-demand, reserve virtual space and commit incrementally
-  if (size == 0) {
+  if (!buf) {
     isize page_size = arena_os_pagesize();
+    size = AlignPow2(size, page_size);
     a.commit_size = page_size * ARENA_COMMIT_PAGE_COUNT;
-    size = a.commit_size;
-    buf = arena_os_reserve(page_size * ARENA_RESERVE_PAGE_COUNT);
+    a.reserve_size = Max(a.commit_size, size);
+
+    buf = arena_os_reserve(a.reserve_size);
     if (!buf) {
       perror("arena_init mmap");
-      Assert(!"arena_init mmap");
+      Assert(!"arena_init reserve failed");
     }
-    Assert(arena_os_commit(buf, a.commit_size));
+
+    if (!arena_os_commit(buf, a.commit_size)) {
+      perror("arena_init mprotect");
+      Assert(!"arena_init commit failed");
+    }
+
+    size = a.commit_size;
   }
 #endif
   a.beg = a.cur = buf;
@@ -343,8 +364,29 @@ ARENA_INLINE Arena arena_init(byte *buf, isize size) {
 }
 
 /**
- * Reset arena to initial state, invalidating all allocations.
- * Does not free memory, just resets the bump pointer.
+ * @brief Release arena memory back to OS.
+ * @param arena Arena to release
+ * 
+ * Invalidates all allocations. Arena struct is zeroed.
+ */
+ARENA_INLINE void arena_release(Arena *arena) {
+#ifdef OOM_COMMIT
+  if (arena->commit_size) {
+    munmap(arena->beg, arena->reserve_size);
+  } else {
+    free(arena->beg);
+  }
+#else
+  free(arena->beg);
+#endif
+  memset(arena, 0, sizeof(Arena));
+}
+
+/**
+ * @brief Reset arena to initial state.
+ * @param arena Arena to reset
+ * 
+ * Invalidates all allocations but keeps memory. Bump pointer moves to start.
  */
 ARENA_INLINE void arena_reset(Arena *arena) {
   ASAN_POISON_MEMORY_REGION(arena->beg, arena->end - arena->beg);
@@ -352,26 +394,15 @@ ARENA_INLINE void arena_reset(Arena *arena) {
 }
 
 /**
- * Check for multiplication overflow safely.
- * Uses compiler intrinsics when available.
- */
-ARENA_INLINE bool arena_mul_overflow(size_t a, size_t b, isize *res) {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_mul_overflow(a, b, res);
-#else
-    *res = a * b;
-    return (a != 0 && *res / a != b);
-#endif
-}
-
-/**
  * Set up OOM (Out Of Memory) handling.
- * Returns non-zero if an OOM condition occurred (from longjmp).
+ *
+ * Returns non-zero if OOM occurred (from longjmp).
  *
  * Usage:
  *   jmp_buf jmpbuf;
  *   if (ArenaOOM(arena, jmpbuf)) {
- *     // Handle OOM
+ *     fputs("!!! OOM exit !!!\n", stderr);
+ *     exit(1);
  *   }
  */
 #ifndef OOM_TRAP
@@ -381,28 +412,40 @@ ARENA_INLINE bool arena_mul_overflow(size_t a, size_t b, isize *res) {
 #endif
 
 /**
- * Allocate memory with potential growth (slow path).
- * Called when fast path in arena_alloc fails.
+ * @brief Allocate memory with potential growth (slow path).
+ * @param arena Arena allocator
+ * @param size Size per element
+ * @param align Alignment requirement
+ * @param count Number of elements
+ * @param flags Allocation flags
+ * @return Pointer to allocated memory, or NULL/longjmp on OOM
+ * 
+ * Called internally when fast path fails. Handles commit-on-demand growth.
  */
 static void *arena_alloc_grow(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
   byte *current = arena->cur;
   isize avail = arena->end - current;
-  isize pad = -(uintptr_t)current & (align - 1);
+  isize pad = AlignPadPow2((uintptr_t)current, align);
 
   isize total_size;
-  if (ARENA_UNLIKELY(arena_mul_overflow(size, count, &total_size))) {
+  if (ARENA_UNLIKELY(__builtin_mul_overflow(size, count, &total_size))) {
       goto HANDLE_OOM;
   }
 
   // Try to commit more memory if using commit-on-demand
   while (count >= (avail - pad) / size) {
 #ifdef OOM_COMMIT
-    // arena->commit_size == 0 if arena was malloced
     if (arena->commit_size) {
+      // Can't commit beyond reservation
+      if (arena->end - arena->beg > arena->reserve_size - arena->commit_size ) {
+        goto HANDLE_OOM;
+      }
+
       if (!arena_os_commit(arena->end, arena->commit_size)) {
         perror("arena_alloc mprotect");
         goto HANDLE_OOM;
       }
+
       ASAN_POISON_MEMORY_REGION(arena->end, arena->commit_size);
       arena->end += arena->commit_size;
       avail = arena->end - current;
@@ -432,24 +475,24 @@ HANDLE_OOM:
 }
 
 /**
- * Allocate aligned memory from arena.
- * Fast path - inlined for performance.
- *
+ * @brief Allocate aligned memory from arena.
  * @param arena Allocator context
- * @param size  Size of each element
- * @param align Alignment requirement
+ * @param size Size of each element
+ * @param align Alignment requirement (must be power of 2)
  * @param count Number of elements
  * @param flags Allocation flags (NO_INIT, OOM_NULL)
  * @return Pointer to allocated memory
+ * 
+ * Fast path is inlined. Memory is zeroed unless NO_INIT flag is set.
  */
 ARENA_INLINE void *arena_alloc(Arena *arena, isize size, isize align, isize count, ArenaFlag flags) {
   Assert(size > 0 && "size must be positive");
   Assert(count >= 0 && "count must be non-negative");
-  Assert((align & (align - 1)) == 0 && "align must be power of 2");
+  Assert(IsPow2(align) && "align must be power of 2");
 
   byte *current = arena->cur;
-  isize pad = -(uintptr_t)current & (align - 1);
   isize avail = arena->end - current;
+  isize pad = AlignPadPow2((uintptr_t)current, align);
 
   // Fast path: allocation fits in current committed region
   if (ARENA_LIKELY(count <= (avail - pad) / size)) {
@@ -460,14 +503,17 @@ ARENA_INLINE void *arena_alloc(Arena *arena, isize size, isize align, isize coun
     return flags.mask & _NO_INIT ? current : memset(current, 0, total_size);
   }
 
-  // Slow path: need to grow or handle OOM
   return arena_alloc_grow(arena, size, align, count, flags);
 }
 
 /**
- * Allocate and initialize memory by copying from source.
- *
- * @param initptr Source data to copy from (must not be NULL)
+ * @brief Allocate and initialize memory by copying from source.
+ * @param arena Arena allocator
+ * @param size Size per element
+ * @param align Alignment requirement
+ * @param count Number of elements
+ * @param initptr Source data to copy from
+ * @return Pointer to allocated and initialized memory
  */
 ARENA_INLINE void *arena_alloc_init(Arena *arena, isize size, isize align, isize count,
                                     const void *initptr) {
@@ -478,8 +524,14 @@ ARENA_INLINE void *arena_alloc_init(Arena *arena, isize size, isize align, isize
 }
 
 /**
- * Grow a slice's capacity.
+ * @brief Grow a slice's capacity.
+ * @param arena Arena to allocate from
+ * @param slice Pointer to slice struct
+ * @param size Size per element
+ * @param align Alignment requirement
+ * 
  * Attempts in-place growth when possible, otherwise reallocates.
+ * Called automatically by Push() macro.
  */
 ARENA_INLINE void arena_slice_grow(Arena *arena, void *slice, isize size, isize align) {
   struct {
@@ -511,7 +563,11 @@ ARENA_INLINE void arena_slice_grow(Arena *arena, void *slice, isize size, isize 
 }
 
 /**
- * malloc-compatible allocation from arena.
+ * @brief malloc-compatible allocation from arena.
+ * @param size Bytes to allocate
+ * @param arena Arena to allocate from
+ * @return Pointer to allocated memory
+ * 
  * For use with generic data structures requiring malloc/free interface.
  */
 ARENA_INLINE void *arena_malloc(size_t size, Arena *arena) {
@@ -520,8 +576,12 @@ ARENA_INLINE void *arena_malloc(size_t size, Arena *arena) {
 }
 
 /**
- * free-compatible deallocation.
- * Only works if ptr is the last allocation (at arena tip).
+ * @brief free-compatible deallocation.
+ * @param ptr Pointer to free
+ * @param size Size of allocation
+ * @param arena Arena that allocated it
+ * 
+ * Only works if ptr is the most recent allocation (at arena tip).
  */
 ARENA_INLINE void arena_free(void *ptr, size_t size, Arena *arena) {
   Assert(arena != NULL && "arena cannot be NULL");
@@ -535,32 +595,41 @@ ARENA_INLINE void arena_free(void *ptr, size_t size, Arena *arena) {
 }
 
 /**
- * Arena-allocated string with length.
- * Not null-terminated by default (use astr_to_cstr for that).
+ * @brief Arena-allocated string with length.
+ * 
+ * Not null-terminated by default. Use astr_to_cstr() for that.
  */
 typedef struct astr {
-  char *data;
-  isize len;
+  char *data;  // String data (may not be null-terminated)
+  isize len;   // Length in bytes
 } astr;
 
 /**
- * Create astr from string literal (compile-time length).
- * Usage: astr s = astr("hello");
+ * Create astr from string literal.
+ *
+ * Usage:
+ *   astr s = astr("hello");
  */
 #define astr(s) ((astr){(s), sizeof(s) - 1})
 
 /**
  * Format specifier for printf-style functions.
- * Usage: printf("%.*s", S(str));
+ *
+ * Usage:
+ *   astr s = astr("hello");
+ *   printf("%.*s\n", S(s));
  */
 #define S(s) (int)(s).len, (s).data
 
 /**
- * Clone string into arena memory.
+ * @brief Clone string into arena memory.
+ * @param arena Arena to allocate in
+ * @param s String to clone
+ * @return New astr with copied data
+ * 
  * No-op if string is empty or already at arena tip.
  */
 ARENA_INLINE astr astr_clone(Arena *arena, astr s) {
-  // Early return if string is empty or already at arena tip
   if (s.len == 0 || s.data + s.len == (char *)arena->cur)
     return s;
 
@@ -571,46 +640,64 @@ ARENA_INLINE astr astr_clone(Arena *arena, astr s) {
 }
 
 /**
- * Concatenate two strings in arena memory.
+ * @brief Concatenate two strings in arena.
+ * @param arena Arena to allocate in
+ * @param head First string
+ * @param tail Second string
+ * @return New astr with concatenated data
+ * 
  * Optimized to avoid copying when possible.
  */
 ARENA_INLINE astr astr_concat(Arena *arena, astr head, astr tail) {
-  // Ignore empty head
   if (head.len == 0) {
-    // If tail is at arena tip, return it directly; otherwise clone
     return tail.len && tail.data + tail.len == (char *)arena->cur ? tail : astr_clone(arena, tail);
   }
 
   astr result = head;
   result = astr_clone(arena, head);
-  // result is guaranteed to be at arena tip, clone tail and append it
   result.len += astr_clone(arena, tail).len;
   return result;
 }
 
 /**
- * Create astr from raw bytes.
+ * @brief Create astr from raw bytes.
+ * @param arena Arena to allocate in
+ * @param bytes Pointer to bytes
+ * @param nbytes Number of bytes
+ * @return Arena-allocated astr
  */
 ARENA_INLINE astr astr_from_bytes(Arena *arena, const void *bytes, size_t nbytes) {
   return astr_clone(arena, (astr){(char *)bytes, nbytes});
 }
 
 /**
- * Create astr from null-terminated C string.
+ * @brief Create astr from null-terminated C string.
+ * @param arena Arena to allocate in
+ * @param str Null-terminated string
+ * @return Arena-allocated astr
  */
 ARENA_INLINE astr astr_from_cstr(Arena *arena, const char *str) {
   return astr_from_bytes(arena, str, strlen(str));
 }
 
 /**
- * Concatenate string with raw bytes.
+ * @brief Concatenate string with raw bytes.
+ * @param arena Arena to allocate in
+ * @param head String prefix
+ * @param bytes Bytes to append
+ * @param nbytes Number of bytes
+ * @return Concatenated astr
  */
 ARENA_INLINE astr astr_cat_bytes(Arena *arena, astr head, const void *bytes, size_t nbytes) {
   return astr_concat(arena, head, (astr){(char *)bytes, nbytes});
 }
 
 /**
- * Concatenate string with C string.
+ * @brief Concatenate string with C string.
+ * @param arena Arena to allocate in
+ * @param head String prefix
+ * @param str C string to append
+ * @return Concatenated astr
  */
 ARENA_INLINE astr astr_cat_cstr(Arena *arena, astr head, const char *str) {
   return astr_cat_bytes(arena, head, str, strlen(str));
@@ -618,7 +705,11 @@ ARENA_INLINE astr astr_cat_cstr(Arena *arena, astr head, const char *str) {
 
 /**
  * Format string using printf-style format.
- * Returns arena-allocated string.
+ *
+ * Returns arena-allocated formatted string.
+ *
+ * Usage:
+ *   astr s1 = astr_format(arena, "%.10f, $%d, %.*s", 3.1415926, 42, S(s));
  */
 static astr astr_format(Arena *arena, const char *format, ...) {
   va_list args;
@@ -633,15 +724,18 @@ static astr astr_format(Arena *arena, const char *format, ...) {
   va_end(args);
   Assert(nbytes2 == nbytes);
 
-  // Drop null terminator so astr_concat still works
-  arena->cur--;
+  arena->cur--;  // Drop null terminator so astr_concat still works
 
   return (astr){.data = data, .len = nbytes};
 }
 
 /**
  * Convert astr to null-terminated C string.
+ *
  * Pass temporary arena by value - lifetime ends at current expression.
+ *
+ * Usage:
+ *   printf("test: %s\n", astr_to_cstr(*arena, s));
  */
 ARENA_INLINE const char *astr_to_cstr(Arena arena, astr s) {
   return astr_concat(&arena, s, astr("\0")).data;
@@ -649,7 +743,14 @@ ARENA_INLINE const char *astr_to_cstr(Arena arena, astr s) {
 
 /**
  * Duplicate astr as malloc'd C string.
- * Caller must free (e.g. __autofree) the returned pointer.
+ *
+ * Caller must free the returned pointer.
+ *
+ * Usage:
+ *   __autofree char *cs = astr_cstrdup(s);
+ *   for (char *p = cs; *p; ++p) {
+ *     // modify cs...
+ *   }
  */
 ARENA_INLINE char *astr_cstrdup(astr s) {
   return strndup(s.data, s.len);
@@ -661,16 +762,19 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const char *charset, isize *pos, A
   const char *p1 = astr_to_cstr(*a, slice);
   const char *p2 = strpbrk(p1, charset);
   astr token = {slice.data, p2 ? (p2 - p1) : slice.len};
-  isize sep_len = p2 ? strspn(p2, charset) : 0;  // Skip any separator chars
+  isize sep_len = p2 ? strspn(p2, charset) : 0;  // Skip separator chars
   *pos += token.len + sep_len;
   return token;
 }
 
 /**
  * Split string by any character in charset.
+ *
  * Usage:
- *   for (astr_split_by_char(it, ",| ", str, arena)) {
- *     printf("%.*s\n", S(it.token));
+ *   int i = 0;
+ *   for (astr_split_by_char(it, ",| $", s3, arena)) {
+ *     printf("'%s'\n", astr_to_cstr(*arena, it.token));
+ *     i++;
  *   }
  */
 #define astr_split_by_char(it, charset, str, arena) \
@@ -692,9 +796,10 @@ ARENA_INLINE astr _astr_split(astr s, astr sep, isize *pos) {
 
 /**
  * Split string by multi-character separator.
+ *
  * Usage:
- *   for (astr_split(it, ", ", str)) {
- *     printf("%.*s\n", S(it.token));
+ *   for (astr_split(it, ",", s3)) {
+ *     printf("|%.*s|\n", S(astr_trim(it.token)));
  *   }
  */
 #define astr_split(it, strsep, str)                             \
@@ -705,7 +810,10 @@ ARENA_INLINE astr _astr_split(astr s, astr sep, isize *pos) {
   it.pos < it.input.len && (it.token = _astr_split(it.input, it.sep, &it.pos)).data;
 
 /**
- * Compare two strings for equality.
+ * @brief Compare two strings for equality.
+ * @param a First string
+ * @param b Second string
+ * @return true if equal, false otherwise
  */
 ARENA_INLINE bool astr_equals(astr a, astr b) {
   if (a.len != b.len)
@@ -715,7 +823,10 @@ ARENA_INLINE bool astr_equals(astr a, astr b) {
 }
 
 /**
- * Check if string starts with prefix.
+ * @brief Check if string starts with prefix.
+ * @param s String to check
+ * @param prefix Prefix to test
+ * @return true if s starts with prefix
  */
 ARENA_INLINE bool astr_starts_with(astr s, astr prefix) {
   isize n = prefix.len;
@@ -723,7 +834,10 @@ ARENA_INLINE bool astr_starts_with(astr s, astr prefix) {
 }
 
 /**
- * Check if string ends with suffix.
+ * @brief Check if string ends with suffix.
+ * @param s String to check
+ * @param suffix Suffix to test
+ * @return true if s ends with suffix
  */
 ARENA_INLINE bool astr_ends_with(astr s, astr suffix) {
   isize n = suffix.len;
@@ -731,8 +845,11 @@ ARENA_INLINE bool astr_ends_with(astr s, astr suffix) {
 }
 
 /**
- * Extract substring starting at pos with length len.
- * Clamps length to string bounds.
+ * @brief Extract substring starting at pos with length len.
+ * @param s Source string
+ * @param pos Start position
+ * @param len Length (clamped to string bounds)
+ * @return Substring view (no allocation)
  */
 ARENA_INLINE astr astr_substr(astr s, isize pos, isize len) {
     Assert(((size_t)pos <= (size_t)s.len) & (len >= 0));
@@ -742,8 +859,11 @@ ARENA_INLINE astr astr_substr(astr s, isize pos, isize len) {
 }
 
 /**
- * Extract substring from position p1 to p2 (exclusive).
- * Clamps to string bounds.
+ * @brief Extract substring from position p1 to p2 (exclusive).
+ * @param s Source string
+ * @param p1 Start position (inclusive)
+ * @param p2 End position (exclusive, clamped to string length)
+ * @return Substring view (no allocation)
  */
 ARENA_INLINE astr astr_slice(astr s, isize p1, isize p2) {
     Assert(((size_t)p1 <= (size_t)p2) & ((size_t)p1 <= (size_t)s.len));
@@ -753,7 +873,9 @@ ARENA_INLINE astr astr_slice(astr s, isize p1, isize p2) {
 }
 
 /**
- * Remove leading whitespace (ASCII <= ' ').
+ * @brief Remove leading whitespace (ASCII <= ' ').
+ * @param s String to trim
+ * @return View of string without leading whitespace
  */
 ARENA_INLINE astr astr_trim_left(astr s) {
   while (s.len && *s.data <= ' ')
@@ -762,7 +884,9 @@ ARENA_INLINE astr astr_trim_left(astr s) {
 }
 
 /**
- * Remove trailing whitespace (ASCII <= ' ').
+ * @brief Remove trailing whitespace (ASCII <= ' ').
+ * @param s String to trim
+ * @return View of string without trailing whitespace
  */
 ARENA_INLINE astr astr_trim_right(astr s) {
   while (s.len && s.data[s.len - 1] <= ' ')
@@ -771,14 +895,19 @@ ARENA_INLINE astr astr_trim_right(astr s) {
 }
 
 /**
- * Remove leading and trailing whitespace.
+ * @brief Remove leading and trailing whitespace.
+ * @param sv String to trim
+ * @return View of trimmed string
  */
 ARENA_INLINE astr astr_trim(astr sv) {
   return astr_trim_right(astr_trim_left(sv));
 }
 
 /**
- * Compute FNV-1a hash of string.
+ * @brief Compute FNV-1a hash of string.
+ * @param key String to hash
+ * @return 64-bit hash value
+ * 
  * Suitable for hash tables.
  */
 ARENA_INLINE uint64_t astr_hash(astr key) {
@@ -792,6 +921,7 @@ ARENA_INLINE uint64_t astr_hash(astr key) {
 /**
  * Hash table integration example:
  *
+ * @code
  * #include "cc.h"
  *
  * static inline uint64_t astr_wyhash(astr key) {
@@ -815,6 +945,7 @@ ARENA_INLINE uint64_t astr_hash(astr key) {
  * #define MALLOC_FN vt_arena_malloc
  * #define FREE_FN   vt_arena_free
  * #include "verstable.h"
+ * @endcode
  */
 
 #endif  // ARENA_H_
