@@ -144,35 +144,35 @@ typedef slice(int64_t) i64s;
 i64s test_slice(Arena* arena) {
   {
     Scratch(arena);
-    slice(int) fibs = {0};
-    fibs = Clone(arena, fibs);
-    *Push(&fibs, arena) = 2;
-    *Push(&fibs, arena) = 3;
-  }
-
-  int64_t data[] = {2, 3, 42};
-  i64s fibs = {.data = data, .len = Countof(data)};
-  {
-    Scratch(arena);
-    fibs = Clone(arena, fibs, 0, 2);
-    for (int i = 2; i < 9; ++i) {
-      *Push(&fibs, arena) = fibs.data[i - 2] + fibs.data[i - 1];
-    }
-
     ALOG(arena);
-    getc(stdin);
     while (1) {
       char* p = New(arena, char, GB(1), OOM_NULL);
+      getchar();
       if (!p) {
         puts("!!! OOM break !!!");
         break;
       }
     }
-    getc(stdin);
-    ALOG(arena);
   }
   ALOG(arena);
-  getc(stdin);
+  getchar();
+
+  int64_t data[] = {2, 3, 42};
+  i64s fibs = {.data = data, .len = Countof(data)};
+  fibs = Clone(arena, fibs, 0, 2);
+  for (int i = 2; i < 9; ++i) {
+    *Push(arena, &fibs) = fibs.data[i - 2] + fibs.data[i - 1];
+  }
+  {
+    Scratch(arena);
+    for (int i = 9; i < 11; ++i) {
+      *Push(arena, &fibs) = fibs.data[i - 2] + fibs.data[i - 1];
+    }
+  }
+  for (int i = 11; i < 29; ++i) {
+    *Push(arena, &fibs) = fibs.data[i - 2] + fibs.data[i - 1];
+  }
+  ALOG(arena);
 
   return fibs;
 }
@@ -301,7 +301,7 @@ int main(int argc, const char* argv[]) {
 
   i64s fibs = test_slice(arena);
   fibs.cap = 0;
-  *Push(&fibs, arena) = 0;
+  *Push(arena, &fibs) = 0;
   puts(">>>fibs");
   for (int i = 0; i < fibs.len; ++i)
     printf("%ld,", fibs.data[i]);
@@ -329,9 +329,9 @@ int main(int argc, const char* argv[]) {
   ULOG(p);
   ALOG(arena);
 
-  getc(stdin);
+  getchar();
   arena_release(arena);
-  getc(stdin);
+  getchar();
 
   return utest_main(argc, argv);
 }

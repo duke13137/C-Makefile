@@ -22,14 +22,14 @@ OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o)
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 DEP := $(OBJ:.o=.d)
 
-WARN = -Wall -Wextra -Wvla -Wno-unused-parameter -Wno-unused-function -Wno-format-security
+WARN = -Wall -Wextra -Wnull-dereference -Wformat=2 -Wvla-larger-than=0 -Wno-format-nonliteral -Wno-unused-parameter -Wno-unused-function
 SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
-CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=1000000000
+CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=4000000000
 CFLAGS   += -MMD -MP $(WARN)
 
 .PHONY: debug release
-debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_TRAP
+debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_COMMIT
 debug: LDFLAGS += $(SANZ)
 debug: $(BIN_TARGET)
 
