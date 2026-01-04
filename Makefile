@@ -22,7 +22,7 @@ OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o)
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 DEP := $(OBJ:.o=.d)
 
-WARN = -Wall -Wextra -Wnull-dereference -Wformat=2 -Wvla-larger-than=0 -Wno-format-nonliteral -Wno-unused-parameter -Wno-unused-function
+WARN = -Wall -Wextra -Wnull-dereference -Wformat=2 -Wno-format-nonliteral -Wno-unused-parameter -Wno-unused-function -Wno-unknown-warning-option -Wvla-larger-than=0
 SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
 CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=4000000000
@@ -60,6 +60,7 @@ deps:
 	curl -s --output-dir include -O https://raw.githubusercontent.com/JacksonAllan/Verstable/refs/heads/main/verstable.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/hirrolot/datatype99/refs/heads/master/datatype99.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/hirrolot/interface99/refs/heads/master/interface99.h
+	curl -s --output-dir include -O https://raw.githubusercontent.com/attractivechaos/klib/refs/heads/master/ketopt.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/sheredom/utf8.h/refs/heads/master/utf8.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/spevnev/uprintf/main/uprintf.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/sheredom/utest.h/refs/heads/master/utest.h
