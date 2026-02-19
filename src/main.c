@@ -128,8 +128,8 @@ astr test_astr(Arena arena[static 1]) {
     printf("num of token=%d\n", i);
 
     i = 0;
-    for (astr_split_by_char(it, ",| $", s3, arena)) {
-      printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 1, 10)));
+    for (astr_split_by_char(it, ",| $", s3)) {
+      printf("'%s'\n", astr_to_cstr(*arena, astr_slice(it.token, 0, 10)));
       i++;
     }
     printf("num of token=%d\n", i);

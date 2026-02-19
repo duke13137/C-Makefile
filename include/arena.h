@@ -755,14 +755,38 @@ ARENA_INLINE char* astr_cstrdup(astr s) {
 }
 
 // Internal helper for astr_split_by_char
-ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos, Arena* a) {
-  astr slice = {s.data + *pos, s.len - *pos};
-  const char* p1 = astr_to_cstr(*a, slice);
-  const char* p2 = strpbrk(p1, charset);
-  astr token = {slice.data, p2 ? (p2 - p1) : slice.len};
-  isize sep_len = p2 ? strspn(p2, charset) : 0;  // Skip separator chars
-  *pos += token.len + sep_len;
+ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos) {
+  isize i = *pos;
+
+  // 256-bit lookup table for O(1) charset membership
+  unsigned char table[256 / 8] = {0};
+  for (const char* c = charset; *c; c++) {
+    unsigned char ch = (unsigned char)*c;
+    table[ch >> 3] |= (1u << (ch & 7));
+  }
+  table[0] |= 1;  // \0 can never be in charset; always treat as separator
+
+#define _ASTR_IN_SET(ch) (table[(unsigned char)(ch) >> 3] & (1u << ((unsigned char)(ch) & 7)))
+
+  // Skip leading separators
+  while (i < s.len && _ASTR_IN_SET(s.data[i]))
+    i++;
+
+  isize start = i;
+
+  // Scan for next separator
+  while (i < s.len && !_ASTR_IN_SET(s.data[i]))
+    i++;
+
+  astr token = {s.data + start, i - start};
+
+  // Skip trailing separators
+  while (i < s.len && _ASTR_IN_SET(s.data[i]))
+    i++;
+
+  *pos = i;
   return token;
+#undef _ASTR_IN_SET
 }
 
 /**
@@ -770,18 +794,18 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos, A
  *
  * Usage:
  *   int i = 0;
- *   for (astr_split_by_char(it, ",| $", s3, arena)) {
- *     printf("'%s'\n", astr_to_cstr(*arena, it.token));
+ *   for (astr_split_by_char(it, ",| $", s3)) {
+ *     printf("'%.*s'\n", S(it.token));
  *     i++;
  *   }
  */
-#define astr_split_by_char(it, charset, str, arena) \
-  struct {                                          \
-    astr input, token;                              \
-    const char* sep;                                \
-    isize pos;                                      \
-  } it = {.input = str, .sep = charset};            \
-  it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.sep, &it.pos, arena)).data[0];
+#define astr_split_by_char(it, charset, str)  \
+  struct {                                    \
+    astr input, token;                        \
+    const char* sep;                          \
+    isize pos;                                \
+  } it = {.input = str, .sep = charset};      \
+  it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.sep, &it.pos)).len > 0;
 
 // Internal helper for astr_split
 ARENA_INLINE astr _astr_split(astr s, astr sep, isize* pos) {
