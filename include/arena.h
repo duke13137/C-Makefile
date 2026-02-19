@@ -215,11 +215,11 @@ static void autofree_impl(void* p) {
 #define _NEWX(a, b, c, d, e, ...) e
 #define _NEW2(a, t)               (t*)arena_alloc(a, sizeof(t), _Alignof(t), 1, (ArenaFlag){0})
 #define _NEW3(a, t, n)            (t*)arena_alloc(a, sizeof(t), _Alignof(t), n, (ArenaFlag){0})
-#define _NEW4(a, t, n, z)                                                                                \
-  ({                                                                                                     \
-    __auto_type _z = (z);                                                                                \
-    (t*)_Generic(_z, t*: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), _Alignof(t), n,         \
-                                                                   _Generic(_z, t*: _z, ArenaFlag: _z)); \
+#define _NEW4(a, t, n, z)                                                                                  \
+  ({                                                                                                       \
+    __auto_type _z = (z);                                                                                  \
+    (t*)_Generic(_z, t *: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), _Alignof(t), n,          \
+                                                                    _Generic(_z, t *: _z, ArenaFlag: _z)); \
   })
 
 #define CONCAT_(a, b) a##b
@@ -431,7 +431,7 @@ static void* arena_alloc_grow(Arena* arena, isize size, isize align, isize count
   }
 
   // Try to commit more memory if using commit-on-demand
-  while (count >= (avail - pad) / size) {
+  while (total_size > avail - pad) {
 #ifdef OOM_COMMIT
     if (arena->commit_size) {
       // Can't commit beyond reservation
@@ -493,8 +493,8 @@ ARENA_INLINE void* arena_alloc(Arena* arena, isize size, isize align, isize coun
   isize pad = AlignPadPow2((uintptr_t)current, align);
 
   // Fast path: allocation fits in current committed region
-  if (ARENA_LIKELY(count <= (avail - pad) / size)) {
-    isize total_size = size * count;
+  isize total_size;
+  if (ARENA_LIKELY(!__builtin_mul_overflow(size, count, &total_size) && total_size <= avail - pad)) {
     arena->cur += pad + total_size;
     current += pad;
     ASAN_UNPOISON_MEMORY_REGION(current, total_size);
@@ -799,12 +799,12 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos) {
  *     i++;
  *   }
  */
-#define astr_split_by_char(it, charset, str)  \
-  struct {                                    \
-    astr input, token;                        \
-    const char* sep;                          \
-    isize pos;                                \
-  } it = {.input = str, .sep = charset};      \
+#define astr_split_by_char(it, charset, str) \
+  struct {                                   \
+    astr input, token;                       \
+    const char* sep;                         \
+    isize pos;                               \
+  } it = {.input = str, .sep = charset};     \
   it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.sep, &it.pos)).len > 0;
 
 // Internal helper for astr_split
