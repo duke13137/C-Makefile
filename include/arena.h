@@ -288,7 +288,7 @@ static void arena_restore(Arena** a) {
     Assert(_s->len >= 0 && "slice.len must be non-negative");                          \
     Assert(_s->cap >= 0 && "slice.cap must be non-negative");                          \
     Assert(!(_s->data == NULL && _s->len > 0) && "Invalid slice");                     \
-    Assert(_s->len <= _s->cap || _s->cap == 0);                                       \
+    Assert(_s->len <= _s->cap || _s->cap == 0);                                        \
     if (_s->len >= _s->cap) {                                                          \
       arena_slice_grow(arena, _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
     }                                                                                  \
@@ -811,13 +811,13 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const unsigned char table[static 2
  *     i++;
  *   }
  */
-#define astr_split_by_char(it, charset, str)                                                      \
-  struct {                                                                                        \
-    astr input, token;                                                                            \
-    unsigned char table[256 / 8];                                                                 \
-    isize pos;                                                                                    \
-  } it = {.input = str};                                                                          \
-  (it.table[0] || (_astr_charset_table(charset, it.table), 1)),                                   \
+#define astr_split_by_char(it, charset, str)                    \
+  struct {                                                      \
+    astr input, token;                                          \
+    unsigned char table[256 / 8];                               \
+    isize pos;                                                  \
+  } it = {.input = str};                                        \
+  (it.table[0] || (_astr_charset_table(charset, it.table), 1)), \
       it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.table, &it.pos)).len > 0;
 
 // Internal helper for astr_split
@@ -858,6 +858,18 @@ ARENA_INLINE bool astr_equals(astr a, astr b) {
 }
 
 /**
+ * @brief Compare two strings lexicographically.
+ * @param a First string
+ * @param b Second string
+ * @return <0 if a<b, 0 if equal, >0 if a>b
+ */
+ARENA_INLINE int astr_compare(astr a, astr b) {
+  isize n = a.len < b.len ? a.len : b.len;
+  int c = n ? memcmp(a.data, b.data, n) : 0;
+  return c ? c : (a.len > b.len) - (a.len < b.len);
+}
+
+/**
  * @brief Check if string starts with prefix.
  * @param s String to check
  * @param prefix Prefix to test
@@ -877,6 +889,28 @@ ARENA_INLINE bool astr_starts_with(astr s, astr prefix) {
 ARENA_INLINE bool astr_ends_with(astr s, astr suffix) {
   isize n = suffix.len;
   return n <= s.len && !memcmp(s.data + s.len - n, suffix.data, n);
+}
+
+/**
+ * @brief Check if string contains a substring.
+ * @param s String to search
+ * @param needle Substring to find
+ * @return true if needle is found in s
+ */
+ARENA_INLINE bool astr_contains(astr s, astr needle) {
+  return needle.len == 0 || memmem(s.data, s.len, needle.data, needle.len) != NULL;
+}
+
+/**
+ * @brief Find first occurrence of substring.
+ * @param s String to search
+ * @param needle Substring to find
+ * @return Position of first match, or -1 if not found
+ */
+ARENA_INLINE isize astr_find(astr s, astr needle) {
+  if (needle.len == 0) return 0;
+  const char* p = memmem(s.data, s.len, needle.data, needle.len);
+  return p ? (isize)(p - s.data) : -1;
 }
 
 /**

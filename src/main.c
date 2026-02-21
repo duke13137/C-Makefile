@@ -595,6 +595,55 @@ UTEST(astr, concat_empty_tail) {
   ASSERT_TRUE(astr_equals(c, astr("hello")));
 }
 
+UTEST(astr, contains_match) {
+  ASSERT_TRUE(astr_contains(astr("hello world"), astr("world")));
+}
+
+UTEST(astr, contains_no_match) {
+  ASSERT_FALSE(astr_contains(astr("hello world"), astr("xyz")));
+}
+
+UTEST(astr, contains_empty_needle) {
+  ASSERT_TRUE(astr_contains(astr("hello"), astr("")));
+}
+
+UTEST(astr, contains_empty_haystack) {
+  ASSERT_FALSE(astr_contains(astr(""), astr("a")));
+}
+
+UTEST(astr, find_found) {
+  ASSERT_EQ(6, astr_find(astr("hello world"), astr("world")));
+}
+
+UTEST(astr, find_not_found) {
+  ASSERT_EQ(-1, astr_find(astr("hello world"), astr("xyz")));
+}
+
+UTEST(astr, find_empty_needle) {
+  ASSERT_EQ(0, astr_find(astr("hello"), astr("")));
+}
+
+UTEST(astr, find_first_of_multiple) {
+  ASSERT_EQ(0, astr_find(astr("abab"), astr("ab")));
+}
+
+UTEST(astr, compare_equal) {
+  ASSERT_EQ(0, astr_compare(astr("abc"), astr("abc")));
+}
+
+UTEST(astr, compare_less) {
+  ASSERT_TRUE(astr_compare(astr("abc"), astr("abd")) < 0);
+}
+
+UTEST(astr, compare_greater) {
+  ASSERT_TRUE(astr_compare(astr("abd"), astr("abc")) > 0);
+}
+
+UTEST(astr, compare_prefix_ordering) {
+  ASSERT_TRUE(astr_compare(astr("ab"), astr("abc")) < 0);
+  ASSERT_TRUE(astr_compare(astr("abc"), astr("ab")) > 0);
+}
+
 int main(int argc, const char* argv[]) {
 #ifdef __COSMOCC__
   ShowCrashReports();
