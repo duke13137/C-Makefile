@@ -428,28 +428,30 @@ static void* arena_alloc_grow(Arena* arena, isize size, isize align, isize count
     goto HANDLE_OOM;
   }
 
-  // Try to commit more memory if using commit-on-demand
-  while (total_size > avail - pad) {
+  if (total_size > avail - pad) {
 #ifdef OOM_COMMIT
     if (arena->commit_size) {
-      // Can't commit beyond reservation
-      if (arena->end - arena->beg > arena->reserve_size - arena->commit_size) {
+      // Compute how much to commit in a single syscall
+      isize needed = total_size + pad - avail;
+      isize commit = AlignPow2(needed, arena->commit_size);
+      isize committed = arena->end - arena->beg;
+
+      if (commit > arena->reserve_size - committed) {
         goto HANDLE_OOM;
       }
 
-      if (!arena_os_commit(arena->end, arena->commit_size)) {
+      if (!arena_os_commit(arena->end, commit)) {
         perror("arena_alloc mprotect");
         goto HANDLE_OOM;
       }
 
-      ASAN_POISON_MEMORY_REGION(arena->end, arena->commit_size);
-      arena->end += arena->commit_size;
-      avail = arena->end - current;
-
-      continue;
-    }
+      ASAN_POISON_MEMORY_REGION(arena->end, commit);
+      arena->end += commit;
+    } else
 #endif
-    goto HANDLE_OOM;
+    {
+      goto HANDLE_OOM;
+    }
   }
 
   arena->cur += pad + total_size;
@@ -514,7 +516,7 @@ ARENA_INLINE void* arena_alloc(Arena* arena, isize size, isize align, isize coun
 ARENA_INLINE void* arena_alloc_init(Arena* arena, isize size, isize align, isize count, const void* initptr) {
   Assert(initptr != NULL && "initptr cannot be NULL");
   void* ptr = arena_alloc(arena, size, align, count, NO_INIT);
-  memmove(ptr, initptr, size * count);
+  memmove(ptr, initptr, size * count);  // initptr may alias ptr (e.g. escaped Scratch data)
   return ptr;
 }
 
@@ -655,7 +657,7 @@ ARENA_INLINE astr astr_concat(Arena* arena, astr head, astr tail) {
     char* p = New(arena, char, tail.len, NO_INIT);
     memmove(p, tail.data, tail.len);
     result.len += tail.len;
-  } else {
+  } else if (tail.len > 0) {
     result.len += astr_clone(arena, tail).len;
   }
   return result;
@@ -758,17 +760,19 @@ ARENA_INLINE char* astr_cstrdup(astr s) {
   return strndup(s.data, s.len);
 }
 
-// Internal helper for astr_split_by_char
-ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos) {
-  isize i = *pos;
-
-  // 256-bit lookup table for O(1) charset membership
-  unsigned char table[256 / 8] = {0};
+// Build 256-bit charset membership table. Always treats \0 as separator.
+ARENA_INLINE void _astr_charset_table(const char* charset, unsigned char table[static 256 / 8]) {
+  memset(table, 0, 256 / 8);
   for (const char* c = charset; *c; c++) {
     unsigned char ch = (unsigned char)*c;
     table[ch >> 3] |= (1u << (ch & 7));
   }
   table[0] |= 1;  // \0 can never be in charset; always treat as separator
+}
+
+// Internal helper for astr_split_by_char (table must be pre-built)
+ARENA_INLINE astr _astr_split_by_char(astr s, const unsigned char table[static 256 / 8], isize* pos) {
+  isize i = *pos;
 
 #define _ASTR_IN_SET(ch) (table[(unsigned char)(ch) >> 3] & (1u << ((unsigned char)(ch) & 7)))
 
@@ -796,6 +800,9 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos) {
 /**
  * Split string by any character in charset.
  *
+ * Table is built once on first iteration (table[0] is a natural sentinel:
+ * always non-zero after build because \0 is always marked as separator).
+ *
  * Usage:
  *   int i = 0;
  *   for (astr_split_by_char(it, ",| $", s3)) {
@@ -803,13 +810,14 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos) {
  *     i++;
  *   }
  */
-#define astr_split_by_char(it, charset, str) \
-  struct {                                   \
-    astr input, token;                       \
-    const char* sep;                         \
-    isize pos;                               \
-  } it = {.input = str, .sep = charset};     \
-  it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.sep, &it.pos)).len > 0;
+#define astr_split_by_char(it, charset, str)                                                      \
+  struct {                                                                                        \
+    astr input, token;                                                                            \
+    unsigned char table[256 / 8];                                                                 \
+    isize pos;                                                                                    \
+  } it = {.input = str};                                                                          \
+  (it.table[0] || (_astr_charset_table(charset, it.table), 1)),                                   \
+      it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.table, &it.pos)).len > 0;
 
 // Internal helper for astr_split
 ARENA_INLINE astr _astr_split(astr s, astr sep, isize* pos) {
