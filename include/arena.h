@@ -215,11 +215,11 @@ static void autofree_impl(void* p) {
 #define _NEWX(a, b, c, d, e, ...) e
 #define _NEW2(a, t)               (t*)arena_alloc(a, sizeof(t), _Alignof(t), 1, (ArenaFlag){0})
 #define _NEW3(a, t, n)            (t*)arena_alloc(a, sizeof(t), _Alignof(t), n, (ArenaFlag){0})
-#define _NEW4(a, t, n, z)                                                                                  \
-  ({                                                                                                       \
-    __auto_type _z = (z);                                                                                  \
-    (t*)_Generic(_z, t *: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), _Alignof(t), n,          \
-                                                                    _Generic(_z, t *: _z, ArenaFlag: _z)); \
+#define _NEW4(a, t, n, z)                                                                                \
+  ({                                                                                                     \
+    __auto_type _z = (z);                                                                                \
+    (t*)_Generic(_z, t*: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), _Alignof(t), n,         \
+                                                                   _Generic(_z, t*: _z, ArenaFlag: _z)); \
   })
 
 #define CONCAT_(a, b) a##b
@@ -287,7 +287,7 @@ static void arena_restore(Arena** a) {
     __auto_type _s = slice;                                                            \
     Assert(_s->len >= 0 && "slice.len must be non-negative");                          \
     Assert(_s->cap >= 0 && "slice.cap must be non-negative");                          \
-    Assert((_s->data == NULL || _s->len > 0) && "Invalid slice");                      \
+    Assert(!(_s->data == NULL && _s->len > 0) && "Invalid slice");                     \
     if (_s->len >= _s->cap) {                                                          \
       arena_slice_grow(arena, _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
     }                                                                                  \
@@ -374,8 +374,6 @@ ARENA_INLINE void arena_release(Arena* arena) {
   } else {
     free(arena->beg);
   }
-#else
-  free(arena->beg);
 #endif
   memset(arena, 0, sizeof(Arena));
 }
@@ -651,9 +649,15 @@ ARENA_INLINE astr astr_concat(Arena* arena, astr head, astr tail) {
     return tail.len && tail.data + tail.len == (char*)arena->cur ? tail : astr_clone(arena, tail);
   }
 
-  astr result = head;
-  result = astr_clone(arena, head);
-  result.len += astr_clone(arena, tail).len;
+  astr result = astr_clone(arena, head);
+  if (tail.len > 0 && tail.data + tail.len == (char*)arena->cur) {
+    // tail overlaps head at arena tip — force copy to avoid no-op clone
+    char* p = New(arena, char, tail.len, NO_INIT);
+    memmove(p, tail.data, tail.len);
+    result.len += tail.len;
+  } else {
+    result.len += astr_clone(arena, tail).len;
+  }
   return result;
 }
 
@@ -811,7 +815,7 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const char* charset, isize* pos) {
 ARENA_INLINE astr _astr_split(astr s, astr sep, isize* pos) {
   astr slice = {s.data + *pos, s.len - *pos};
   const char* res = memmem(slice.data, slice.len, sep.data, sep.len);
-  astr token = {slice.data, res && res != slice.data ? (res - slice.data) : slice.len};
+  astr token = {slice.data, res ? (res - slice.data) : slice.len};
   *pos += token.len + sep.len;
   return token;
 }
@@ -902,7 +906,7 @@ ARENA_INLINE astr astr_slice(astr s, isize p1, isize p2) {
  * @return View of string without leading whitespace
  */
 ARENA_INLINE astr astr_trim_left(astr s) {
-  while (s.len && *s.data <= ' ')
+  while (s.len && (unsigned char)*s.data <= ' ')
     ++s.data, --s.len;
   return s;
 }
@@ -913,7 +917,7 @@ ARENA_INLINE astr astr_trim_left(astr s) {
  * @return View of string without trailing whitespace
  */
 ARENA_INLINE astr astr_trim_right(astr s) {
-  while (s.len && s.data[s.len - 1] <= ' ')
+  while (s.len && (unsigned char)s.data[s.len - 1] <= ' ')
     --s.len;
   return s;
 }

@@ -115,7 +115,7 @@ astr test_astr(Arena arena[static 1]) {
     s = astr_cat_cstr(arena, s, "hello");
     astr s1 = astr_format(arena, "%.10f, $%d, %.*s", 3.1415926, 42, S(s));
     printf("test_astr: %.*s\n", S(s1));
-    char buf[] = ", world, \0!!!   ";
+    char buf[] = ", world, \0!!!";
     s3 = astr_cat_bytes(arena, s1, buf, sizeof(buf));
     printf("test_astr: %.*s\n", S(s3));
 
@@ -279,6 +279,296 @@ UTEST(interface99, oop) {
   VCALL(t, scale, 5);
   p = VCALL(t, perim);
   ASSERT_EQ(p, 75);
+}
+
+UTEST(astr, split_leading_sep) {
+  int i = 0;
+  for (astr_split(it, ",", astr(",,a,b"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 4);
+}
+
+UTEST(astr, split_trailing_sep) {
+  int i = 0;
+  for (astr_split(it, ",", astr("a,b,,"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 3);
+}
+
+UTEST(astr, split_all_sep) {
+  int i = 0;
+  for (astr_split(it, ",", astr(",,,"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 3);
+}
+
+UTEST(astr, split_no_sep) {
+  int i = 0;
+  for (astr_split(it, ",", astr("hello"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 1);
+}
+
+UTEST(astr, split_empty) {
+  int i = 0;
+  for (astr_split(it, ",", astr(""))) {
+    i++;
+  }
+  ASSERT_EQ(i, 0);
+}
+
+UTEST(astr, split_single_char) {
+  int i = 0;
+  for (astr_split(it, ",", astr("x"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 1);
+}
+
+UTEST(astr, split_multibyte_sep) {
+  int i = 0;
+  for (astr_split(it, "->", astr("a->b->->c"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 4);
+}
+
+UTEST(astr, split_by_char_leading_sep) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr(",,a,b"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 2);
+}
+
+UTEST(astr, split_by_char_all_sep) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr(",,,"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 0);
+}
+
+UTEST(astr, split_by_char_empty) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr(""))) {
+    i++;
+  }
+  ASSERT_EQ(i, 0);
+}
+
+UTEST(astr, split_by_char_trailing_sep) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr("a,b,,"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 2);
+}
+
+UTEST(astr, split_by_char_no_sep) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr("hello"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 1);
+}
+
+UTEST(astr, split_by_char_single_char) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr("x"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 1);
+}
+
+UTEST(astr, split_by_char_multi_charset) {
+  // Multiple separator characters
+  int i = 0;
+  astr tokens[5];
+  for (astr_split_by_char(it, ",| $", astr("a,b|c d$e"))) {
+    tokens[i++] = it.token;
+  }
+  ASSERT_EQ(i, 5);
+  ASSERT_TRUE(astr_equals(tokens[0], astr("a")));
+  ASSERT_TRUE(astr_equals(tokens[1], astr("b")));
+  ASSERT_TRUE(astr_equals(tokens[2], astr("c")));
+  ASSERT_TRUE(astr_equals(tokens[3], astr("d")));
+  ASSERT_TRUE(astr_equals(tokens[4], astr("e")));
+}
+
+UTEST(astr, split_by_char_consecutive_sep) {
+  // Consecutive mixed separators treated as one gap
+  int i = 0;
+  for (astr_split_by_char(it, ", ", astr("a,  ,b"))) {
+    i++;
+  }
+  ASSERT_EQ(i, 2);
+}
+
+UTEST(astr, split_by_char_only_sep_single) {
+  int i = 0;
+  for (astr_split_by_char(it, ",", astr(","))) {
+    i++;
+  }
+  ASSERT_EQ(i, 0);
+}
+
+UTEST(astr, split_by_char_embedded_nul) {
+  // \0 in data should be treated as separator (not content)
+  char data[] = "a\0b\0c";
+  astr s = {data, 5};
+  int i = 0;
+  for (astr_split_by_char(it, ",", s)) {
+    i++;
+  }
+  ASSERT_EQ(i, 3);
+}
+
+UTEST(astr, trim_ascii) {
+  astr s = astr_trim(astr("  hello  "));
+  ASSERT_TRUE(astr_equals(s, astr("hello")));
+}
+
+UTEST(astr, trim_tabs_newlines) {
+  astr s = astr_trim(astr("\t\nhello\r\n"));
+  ASSERT_TRUE(astr_equals(s, astr("hello")));
+}
+
+UTEST(astr, trim_all_whitespace) {
+  astr s = astr_trim(astr("   "));
+  ASSERT_EQ(s.len, 0);
+}
+
+UTEST(astr, trim_empty) {
+  astr s = astr_trim(astr(""));
+  ASSERT_EQ(s.len, 0);
+}
+
+UTEST(astr, trim_no_whitespace) {
+  astr s = astr_trim(astr("hello"));
+  ASSERT_TRUE(astr_equals(s, astr("hello")));
+}
+
+UTEST(astr, trim_preserves_high_bytes) {
+  // UTF-8: "é" = \xc3\xa9 — must NOT be trimmed
+  astr s = astr_trim_left(astr("\xc3\xa9tail"));
+  ASSERT_TRUE(astr_equals(s, astr("\xc3\xa9tail")));
+
+  s = astr_trim_right(astr("head\xc3\xa9"));
+  ASSERT_TRUE(astr_equals(s, astr("head\xc3\xa9")));
+}
+
+UTEST(astr, trim_left_only) {
+  astr s = astr_trim_left(astr("  hello  "));
+  ASSERT_TRUE(astr_equals(s, astr("hello  ")));
+}
+
+UTEST(astr, trim_right_only) {
+  astr s = astr_trim_right(astr("  hello  "));
+  ASSERT_TRUE(astr_equals(s, astr("  hello")));
+}
+
+UTEST(astr, concat_self_at_tip) {
+  // Place a string at the arena tip, then concat with itself
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  astr s = astr_format(arena, "hello");  // s is at arena tip
+  astr doubled = astr_concat(arena, s, s);
+  ASSERT_EQ(doubled.len, 10);
+  ASSERT_TRUE(astr_equals(doubled, astr("hellohello")));
+}
+
+UTEST(astr, concat_normal) {
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  astr a = astr_format(arena, "hello");
+  astr b = astr_format(arena, "world");
+  astr c = astr_concat(arena, a, b);
+  ASSERT_EQ(c.len, 10);
+  ASSERT_TRUE(astr_equals(c, astr("helloworld")));
+}
+
+UTEST(astr, concat_empty_head) {
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  astr a = astr("");
+  astr b = astr_format(arena, "world");
+  astr c = astr_concat(arena, a, b);
+  ASSERT_TRUE(astr_equals(c, astr("world")));
+}
+
+UTEST(slice, push_fresh) {
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  i64s s = {0};
+  *Push(arena, &s) = 10;
+  *Push(arena, &s) = 20;
+  *Push(arena, &s) = 30;
+  ASSERT_EQ(s.len, 3);
+  ASSERT_EQ(s.data[0], 10);
+  ASSERT_EQ(s.data[1], 20);
+  ASSERT_EQ(s.data[2], 30);
+}
+
+UTEST(slice, push_after_len_reset) {
+  // Bug 4: {data!=NULL, len=0, cap>0} must not assert
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  i64s s = {0};
+  *Push(arena, &s) = 1;
+  *Push(arena, &s) = 2;
+  ASSERT_EQ(s.len, 2);
+
+  s.len = 0;  // reuse as buffer
+  *Push(arena, &s) = 99;
+  ASSERT_EQ(s.len, 1);
+  ASSERT_EQ(s.data[0], 99);
+  ASSERT_TRUE(s.cap > 0);
+}
+
+UTEST(slice, clone_and_push) {
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  i64s s = {0};
+  *Push(arena, &s) = 1;
+  *Push(arena, &s) = 2;
+  *Push(arena, &s) = 3;
+
+  i64s copy = Clone(arena, s, 0, 2);
+  ASSERT_EQ(copy.len, 2);
+  ASSERT_EQ(copy.data[0], 1);
+  ASSERT_EQ(copy.data[1], 2);
+
+  *Push(arena, &copy) = 42;
+  ASSERT_EQ(copy.len, 3);
+  ASSERT_EQ(copy.data[2], 42);
+}
+
+UTEST(astr, concat_empty_tail) {
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  astr a = astr_format(arena, "hello");
+  astr b = astr("");
+  astr c = astr_concat(arena, a, b);
+  ASSERT_TRUE(astr_equals(c, astr("hello")));
 }
 
 int main(int argc, const char* argv[]) {
