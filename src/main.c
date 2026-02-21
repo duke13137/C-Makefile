@@ -540,6 +540,30 @@ UTEST(slice, push_after_len_reset) {
   ASSERT_TRUE(s.cap > 0);
 }
 
+UTEST(slice, push_after_cap_reset) {
+  // cap=0 detaches from old storage; Push must allocate fresh and copy
+  enum { size = KB(4) };
+  byte mem[size] = {0};
+  Arena arena[] = {arena_init(mem, size)};
+
+  i64s s = {0};
+  *Push(arena, &s) = 1;
+  *Push(arena, &s) = 2;
+  *Push(arena, &s) = 3;
+  ASSERT_EQ(s.len, 3);
+
+  int64_t *old_data = s.data;
+  s.cap = 0;
+  *Push(arena, &s) = 4;
+  ASSERT_EQ(s.len, 4);
+  ASSERT_EQ(s.data[0], 1);
+  ASSERT_EQ(s.data[1], 2);
+  ASSERT_EQ(s.data[2], 3);
+  ASSERT_EQ(s.data[3], 4);
+  ASSERT_TRUE(s.data != old_data);  // must have new backing storage
+  ASSERT_TRUE(s.cap >= s.len);
+}
+
 UTEST(slice, clone_and_push) {
   enum { size = KB(4) };
   byte mem[size] = {0};

@@ -288,6 +288,7 @@ static void arena_restore(Arena** a) {
     Assert(_s->len >= 0 && "slice.len must be non-negative");                          \
     Assert(_s->cap >= 0 && "slice.cap must be non-negative");                          \
     Assert(!(_s->data == NULL && _s->len > 0) && "Invalid slice");                     \
+    Assert(_s->len <= _s->cap || _s->cap == 0);                                       \
     if (_s->len >= _s->cap) {                                                          \
       arena_slice_grow(arena, _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
     }                                                                                  \
@@ -310,9 +311,8 @@ static void arena_restore(Arena** a) {
     __auto_type _s = slice;                                                   \
     isize _start = start;                                                     \
     isize _len = length;                                                      \
-    Assert((_start <= _s.len) && (_len >= 0) && _len <= _s.len);              \
+    Assert(_start >= 0 && _len >= 0 && _start + _len <= _s.len);              \
     if (_len > 0) {                                                           \
-      Assert((_s.data + _start + _len) <= (_s.data + _s.len));                \
       _s.data = New(arena, __typeof__(_s.data[0]), _len, (_s.data + _start)); \
     } else                                                                    \
       _s.data = NULL;                                                         \
@@ -487,6 +487,7 @@ ARENA_INLINE void* arena_alloc(Arena* arena, isize size, isize align, isize coun
   Assert(size > 0 && "size must be positive");
   Assert(count >= 0 && "count must be non-negative");
   Assert(IsPow2(align) && "align must be power of 2");
+  Assert(arena->beg <= arena->cur && arena->cur <= arena->end && "corrupt arena");
 
   byte* current = arena->cur;
   isize avail = arena->end - current;
