@@ -1,35 +1,3 @@
-// uprintf v1.1.0
-// Documentation, examples and issues: https://github.com/spevnev/uprintf
-
-// Minimal example:
-/*
-#define UPRINTF_IMPLEMENTATION
-#include "uprintf.h"
-
-typedef struct {
-    int i;
-    float f;
-    const char *str;
-} S;
-
-int main(void) {
-    S s = {1, 2.3F, "string"};
-    uprintf("structure: %S\n", &s);
-    return 0;
-}
-*/
-
-// Building and running:
-/*
-$ gcc -g2 example.c
-$ ./a.out
-structure: {
-    int i = 1
-    float f = 2.300000
-    const char *str = 0x559467793d83 ("string")
-}
-*/
-
 // MIT License
 //
 // Copyright (c) 2024 Serhii Pievniev
@@ -51,6 +19,41 @@ structure: {
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+/*
+
+uprintf v1.2.0
+Documentation, examples and issues: https://github.com/spevnev/uprintf
+
+Minimal example:
+```
+#define UPRINTF_IMPLEMENTATION
+#include "uprintf.h"
+
+typedef struct {
+    int i;
+    float f;
+    const char *str;
+} S;
+
+int main(void) {
+    S s = {1, 2.3F, "string"};
+    uprintf("structure: %S\n", &s);
+    return 0;
+}
+```
+
+Building and running:
+```
+$ gcc -g2 example.c
+$ ./a.out
+structure: {
+    int i = 1
+    float f = 2.300000
+    const char *str = 0x559467793d83 ("string")
+}
+```
+*/
 
 // ====================== HEADER ==========================
 
@@ -76,8 +79,8 @@ extern int _upf_test_status;
 // them to get expanded before stringification.
 #define _upf_stringify_va_args(...) #__VA_ARGS__
 
-// The noop instruction is required to keep the return PC within the scope of the
-// caller function. Otherwise, it might be optimized to return outside of it.
+// The noop instruction is required to prevent tail call optimization
+// and keep the return PC within the scope of the caller function.
 #define uprintf(fmt, ...)                                                                        \
     do {                                                                                         \
         _upf_uprintf(__FILE__, __LINE__, fmt, _upf_stringify_va_args(__VA_ARGS__), __VA_ARGS__); \
@@ -86,7 +89,7 @@ extern int _upf_test_status;
 
 #endif  // UPRINTF_H
 
-// ====================== SOURCE ==========================
+// ================== IMPLEMENTATION ======================
 
 #ifdef UPRINTF_IMPLEMENTATION
 
@@ -114,14 +117,16 @@ extern int _upf_test_status;
 
 // ===================== INCLUDES =========================
 
-#include <dlfcn.h>
+#include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <link.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -130,24 +135,50 @@ extern int _upf_test_status;
 #include <sys/stat.h>
 #include <unistd.h>
 
-// =================== DECLARATIONS =======================
+// ===================== BITNESS ==========================
 
-// Feature test macros might not work since the header could have already been
-// included and expanded without them, so the functions must be declared here.
+#if UPRINTF_WORD_SIZE == 32 || UINTPTR_MAX == UINT32_MAX
+#define _UPF_64BIT false
+#elif UPRINTF_WORD_SIZE == 64 || UINTPTR_MAX == UINT64_MAX
+#define _UPF_64BIT true
+#else
+#error Unknown or invalid word size, it must be 32 or 64 bits, it can be set using `#define UPRINTF_WORD_SIZE`
+#endif
 
-ssize_t getline(char **lineptr, size_t *n, FILE *stream);
-
-// Partial redefinition of dl_phdr_info.
-typedef struct {
-    Elf64_Addr dlpi_addr;
-    const char *dlpi_name;
-} _upf_dl_phdr_info;
-
-struct dl_phdr_info;
-int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *info, size_t size, void *data), void *data);
+// ======================= ELF ============================
 
 // Linker-generated entry to the dynamic section of ELF.
-extern Elf64_Dyn _DYNAMIC[];
+extern ElfW(Dyn) _DYNAMIC[];
+
+#if _UPF_64BIT
+#define _UPF_ELFW(x) ELF64_##x
+#else
+#define _UPF_ELFW(x) ELF32_##x
+#endif
+
+#if defined(__x86_64__)
+#define _UPF_ELF_GLOB_DAT R_X86_64_GLOB_DAT
+#elif defined(__i386__)
+#define _UPF_ELF_GLOB_DAT R_386_GLOB_DAT
+#elif defined(__aarch64__)
+#define _UPF_ELF_GLOB_DAT R_AARCH64_GLOB_DAT
+#elif defined(__arm__)
+#define _UPF_ELF_GLOB_DAT R_ARM_GLOB_DAT
+#elif defined(__riscv)
+#define _UPF_ELF_GLOB_DAT R_RISCV_64
+#elif defined(__powerpc64__)
+#define _UPF_ELF_GLOB_DAT R_PPC64_GLOB_DAT
+#elif defined(__powerpc__)
+#define _UPF_ELF_GLOB_DAT R_PPC_GLOB_DAT
+#elif defined(__s390x__)
+#define _UPF_ELF_GLOB_DAT R_390_GLOB_DAT
+#elif defined(__mips__)
+#define _UPF_ELF_GLOB_DAT R_MIPS_GLOB_DAT
+#elif defined(__sparc__)
+#define _UPF_ELF_GLOB_DAT R_SPARC_GLOB_DAT
+#else
+#error "Unsupported architecture"
+#endif
 
 // ===================== dwarf.h ==========================
 
@@ -350,8 +381,6 @@ int _upf_test_status = EXIT_SUCCESS;
 
 #define _UPF_OUT_OF_MEMORY() _UPF_ERROR("Process ran out of memory.")
 
-#define _UPF_NO_DEBUG_INFO_ERROR "Ensure that the executable contains debugging information of at least 2nd level (-g2 or -g3)."
-
 // ======================= C++ ============================
 
 #ifdef __cplusplus
@@ -453,7 +482,7 @@ typedef struct {
     _upf_named_type_vec args;
     bool is_variadic;
     bool is_external;
-    uint64_t pc;
+    uintptr_t pc;
 } _upf_function;
 
 _UPF_VECTOR_TYPEDEF(_upf_function_vec, _upf_function);
@@ -533,8 +562,8 @@ struct _upf_type {
 _UPF_VECTOR_TYPEDEF(_upf_type_vec, _upf_type *);
 
 typedef struct {
-    uint64_t start;
-    uint64_t end;
+    uintptr_t start;
+    uintptr_t end;
 } _upf_range;
 
 _UPF_VECTOR_TYPEDEF(_upf_range_vec, _upf_range);
@@ -706,7 +735,7 @@ typedef struct {
 
 _UPF_MAP_TYPEDEF(_upf_struct_info_map, _upf_struct_key, _upf_struct_info);
 
-_UPF_MAP_TYPEDEF(_upf_pc_cstr_map, uint64_t, const char *);
+_UPF_MAP_TYPEDEF(_upf_pc_cstr_map, uintptr_t, const char *);
 _UPF_MAP_TYPEDEF(_upf_die_type_map, const uint8_t *, _upf_type *);
 
 // =================== GLOBAL STATE =======================
@@ -897,8 +926,16 @@ static bool _upf_map_impl_keys_equal(const void *a, const void *b, bool is_key_s
 #define _UPF_MAP_GET_HASH(data, index, entry_size) (*((uint32_t *) _UPF_MAP_GET_ENTRY(data, index, entry_size)))
 
 // Find an element by the key, return whether it exists and write index to `result`.
-static bool _upf_map_impl_find(const uint8_t *data, uint32_t capacity, size_t entry_size, void *key, bool is_key_str, size_t key_size,
-                               size_t key_offset, uint32_t *result) {
+static bool _upf_map_impl_find(
+    const uint8_t *data,
+    uint32_t capacity,
+    size_t entry_size,
+    void *key,
+    bool is_key_str,
+    size_t key_size,
+    size_t key_offset,
+    uint32_t *result
+) {
     if (capacity == 0) return false;
 
     uint32_t index = _upf_map_impl_hash_key(key, is_key_str, key_size) % capacity;
@@ -914,8 +951,19 @@ static bool _upf_map_impl_find(const uint8_t *data, uint32_t capacity, size_t en
     return false;
 }
 
-static void _upf_map_impl_set(uint8_t **data, uint32_t *size, uint32_t *capacity, size_t entry_size, void *key, bool is_key_str,
-                              size_t key_size, size_t key_offset, void *value, size_t value_size, size_t value_offset) {
+static void _upf_map_impl_set(
+    uint8_t **data,
+    uint32_t *size,
+    uint32_t *capacity,
+    size_t entry_size,
+    void *key,
+    bool is_key_str,
+    size_t key_size,
+    size_t key_offset,
+    void *value,
+    size_t value_size,
+    size_t value_offset
+) {
     _UPF_ASSERT(data != NULL && size != NULL && capacity != NULL && key != NULL && value != NULL);
 
     if (*size >= *capacity * _UPF_MAP_LOAD_FACTOR) {
@@ -952,24 +1000,42 @@ static void _upf_map_impl_set(uint8_t **data, uint32_t *size, uint32_t *capacity
 #undef _UPF_MAP_GET_HASH
 
 // Returns pointer to the value if it exists, or NULL if it doesn't.
-#define _UPF_MAP_IMPL_GET(map, search_key, is_key_str)                                                                            \
-    ((map)->capacity > 0                                                                                                          \
-         ? _upf_map_impl_find((uint8_t *) (map)->data, (map)->capacity, sizeof(*(map)->data), (void *) &(search_key), is_key_str, \
-                              sizeof((map)->data->key), _UPF_OFFSET_OF((map)->data, key), &_upf_state.map_index)                  \
-               ? &(map)->data[_upf_state.map_index].value                                                                         \
-               : NULL                                                                                                             \
-         : NULL)
+#define _UPF_MAP_IMPL_GET(map, search_key, is_key_str)                    \
+    ((map)->capacity > 0 ? _upf_map_impl_find(                            \
+                               (uint8_t *) (map)->data,                   \
+                               (map)->capacity,                           \
+                               sizeof(*(map)->data),                      \
+                               (void *) &(search_key),                    \
+                               is_key_str,                                \
+                               sizeof((map)->data->key),                  \
+                               _UPF_OFFSET_OF((map)->data, key),          \
+                               &_upf_state.map_index                      \
+                           )                                              \
+                               ? &(map)->data[_upf_state.map_index].value \
+                               : NULL                                     \
+                         : NULL)
 
 // Initialize map before calling OFFSET_OF since it has a UB when container is NULL.
-#define _UPF_MAP_IMPL_SET(map, entry_key, is_key_str, entry_value)                                                                         \
-    (_upf_map_impl_init((uint8_t **) &(map)->data, &(map)->capacity, sizeof(*(map)->data)),                                                \
-     _upf_map_impl_set((uint8_t **) &(map)->data, &(map)->size, &(map)->capacity, sizeof(*(map)->data), (void *) &(entry_key), is_key_str, \
-                       sizeof((map)->data->key), _UPF_OFFSET_OF((map)->data, key), (void *) &(entry_value), sizeof((map)->data->value),    \
-                       _UPF_OFFSET_OF((map)->data, value)))
+#define _UPF_MAP_IMPL_SET(map, entry_key, is_key_str, entry_value)                          \
+    (_upf_map_impl_init((uint8_t **) &(map)->data, &(map)->capacity, sizeof(*(map)->data)), \
+     _upf_map_impl_set(                                                                     \
+         (uint8_t **) &(map)->data,                                                         \
+         &(map)->size,                                                                      \
+         &(map)->capacity,                                                                  \
+         sizeof(*(map)->data),                                                              \
+         (void *) &(entry_key),                                                             \
+         is_key_str,                                                                        \
+         sizeof((map)->data->key),                                                          \
+         _UPF_OFFSET_OF((map)->data, key),                                                  \
+         (void *) &(entry_value),                                                           \
+         sizeof((map)->data->value),                                                        \
+         _UPF_OFFSET_OF((map)->data, value)                                                 \
+     ))
 
 #define _UPF_MAP_GET(map, search_key) _UPF_MAP_IMPL_GET(map, search_key, false)
 #define _UPF_MAP_STR_GET(map, search_key) _UPF_MAP_IMPL_GET(map, search_key, true)
 
+// Disable warning to allow storing pointers as values.
 // NOLINTNEXTLINE(bugprone-sizeof-expression)
 #define _UPF_MAP_SET(map, entry_key, entry_value) _UPF_MAP_IMPL_SET(map, entry_key, false, entry_value)
 // NOLINTNEXTLINE(bugprone-sizeof-expression)
@@ -1114,7 +1180,7 @@ static size_t _upf_get_attr_size(const uint8_t *die, uint64_t form) {
         case DW_FORM_flag_present:
         case DW_FORM_implicit_const: return 0;
     }
-    _UPF_ERROR("Invalid DWARF attribute type: 0x%lx.", form);
+    _UPF_ERROR("Invalid DWARF attribute type: 0x%" PRIx64 ".", form);
 }
 
 static uint64_t _upf_get_x_offset(const uint8_t *die, uint64_t form) {
@@ -1132,7 +1198,7 @@ static uint64_t _upf_get_x_offset(const uint8_t *die, uint64_t form) {
         case DW_FORM_addrx:
         case DW_FORM_strx:   _upf_uLEB_to_uint64(die, &offset); return offset;
     }
-    _UPF_ERROR("Invalid DWARF addrx/strx type: 0x%lx.", form);
+    _UPF_ERROR("Invalid DWARF addrx/strx type: 0x%" PRIx64 ".", form);
 }
 
 static const char *_upf_get_str(const _upf_cu *cu, const uint8_t *die, uint64_t form) {
@@ -1151,7 +1217,7 @@ static const char *_upf_get_str(const _upf_cu *cu, const uint8_t *die, uint64_t 
             return _upf_state.str + _upf_offset_cast(_upf_state.str_offsets + cu->str_offsets_base + offset);
         }
     }
-    _UPF_ERROR("Invalid DWARF string type: 0x%lx.", form);
+    _UPF_ERROR("Invalid DWARF string type: 0x%" PRIx64 ".", form);
 }
 
 static uint64_t _upf_get_ref(const uint8_t *die, uint64_t form) {
@@ -1205,7 +1271,7 @@ static int64_t _upf_get_data(const uint8_t *die, _upf_attr attr) {
             return data;
         } break;
     }
-    _UPF_ERROR("Invalid DWARF data type: 0x%lx.", attr.form);
+    _UPF_ERROR("Invalid DWARF data type: 0x%" PRIx64 ".", attr.form);
 }
 
 static bool _upf_is_addr(uint64_t form) {
@@ -1234,13 +1300,13 @@ static uint64_t _upf_get_addr(const _upf_cu *cu, const uint8_t *die, uint64_t fo
             return _upf_address_cast(_upf_state.addr + offset);
         }
     }
-    _UPF_ERROR("Invalid DWARF address type: 0x%lx.", form);
+    _UPF_ERROR("Invalid DWARF address type: 0x%" PRIx64 ".", form);
 }
 
 static bool _upf_get_flag(const uint8_t *die, uint64_t form) {
     if (form == DW_FORM_flag_present) return true;
     if (form == DW_FORM_flag) return *die;
-    _UPF_ERROR("Invalid DWARF flag type: 0x%lx.", form);
+    _UPF_ERROR("Invalid DWARF flag type: 0x%" PRIx64 ".", form);
 }
 
 static size_t _upf_get_abbrev(const _upf_abbrev **abbrev, const _upf_cu *cu, const uint8_t *die) {
@@ -1444,7 +1510,7 @@ static _upf_type_kind _upf_get_base_type_kind(int64_t encoding, int64_t size) {
         case DW_ATE_packed_decimal:  _UPF_WARN("C shouldn't have packed decimals. Ignoring this type."); return _UPF_TK_UNKNOWN;
         case DW_ATE_numeric_string:  _UPF_WARN("C shouldn't have numeric strings. Ignoring this type."); return _UPF_TK_UNKNOWN;
         case DW_ATE_edited:          _UPF_WARN("C shouldn't have edited strings. Ignoring this type."); return _UPF_TK_UNKNOWN;
-        default:                     _UPF_WARN("Skipping unknown DWARF type encoding (0x%02lx)", encoding); return _UPF_TK_UNKNOWN;
+        default:                     _UPF_WARN("Skipping unknown DWARF type encoding (0x%02" PRIx64 ")", encoding); return _UPF_TK_UNKNOWN;
     }
 }
 
@@ -1455,7 +1521,7 @@ static int _upf_get_type_modifier(uint64_t tag) {
         case DW_TAG_restrict_type: return _UPF_MOD_RESTRICT;
         case DW_TAG_atomic_type:   return _UPF_MOD_ATOMIC;
     }
-    _UPF_ERROR("Invalid DWARF type modifier: 0x%lx.", tag);
+    _UPF_ERROR("Invalid DWARF type modifier: 0x%" PRIx64 ".", tag);
 }
 
 static _upf_type *_upf_new_type(_upf_type type) {
@@ -1598,6 +1664,7 @@ static const char *_upf_get_type_name(const _upf_cu *cu, const uint8_t *die, con
 }
 
 static const uint8_t *_upf_get_import_die(const _upf_cu *cu, const uint8_t *die, const _upf_abbrev *abbrev) {
+    _UPF_ASSERT(cu != NULL && die != NULL && abbrev != NULL);
     for (uint32_t i = 0; i < abbrev->attrs.length; i++) {
         _upf_attr attr = abbrev->attrs.data[i];
         if (attr.name == DW_AT_import) return cu->base + _upf_get_ref(die, attr.form);
@@ -1610,7 +1677,7 @@ static _upf_function _upf_parse_subprogram(const _upf_cu *cu, const uint8_t *die
     _UPF_ASSERT(cu != NULL && die != NULL && abbrev != NULL);
 
     _upf_function function = _UPF_ZERO_INIT;
-    function.pc = UINT64_MAX;
+    function.pc = UINTPTR_MAX;
     for (uint32_t i = 0; i < abbrev->attrs.length; i++) {
         _upf_attr attr = abbrev->attrs.data[i];
         switch (attr.name) {
@@ -2080,7 +2147,7 @@ static _upf_type *_upf_parse_type(const _upf_cu *cu, const uint8_t *die) {
                 return _upf_new_type2(die_base, type);
             }
         }
-        default: _UPF_WARN("Found unsupported type (0x%lx). Ignoring it.", abbrev->tag); break;
+        default: _UPF_WARN("Found unsupported type (0x%" PRIx64 "). Ignoring it.", abbrev->tag); break;
     }
 
     _upf_type type;
@@ -2134,8 +2201,15 @@ static void _upf_parse_inheritance(_upf_parsing_info *p, const uint8_t *die, con
     _UPF_VECTOR_PUSH(&p->ns_imports, import);
 }
 
-static _upf_range_vec _upf_get_die_ranges(const _upf_cu *cu, const uint8_t *low_pc_die, _upf_attr low_pc_attr, const uint8_t *high_pc_die,
-                                          _upf_attr high_pc_attr, const uint8_t *ranges_die, _upf_attr ranges_attr) {
+static _upf_range_vec _upf_get_die_ranges(
+    const _upf_cu *cu,
+    const uint8_t *low_pc_die,
+    _upf_attr low_pc_attr,
+    const uint8_t *high_pc_die,
+    _upf_attr high_pc_attr,
+    const uint8_t *ranges_die,
+    _upf_attr ranges_attr
+) {
     _UPF_ASSERT(cu != NULL);
 
     if (ranges_die != NULL) return _upf_get_ranges(cu, ranges_die, ranges_attr.form);
@@ -2530,6 +2604,10 @@ static void _upf_parse_dwarf(void) {
         }
         _upf_state.offset_size = is64bit ? 8 : 4;
 
+#if !_UPF_64BIT
+        if (is64bit) _UPF_ERROR("DWARF must be 32-bit");
+#endif
+
         const uint8_t *next = die + length;
 
         uint16_t version = 0;
@@ -2555,42 +2633,62 @@ static void _upf_parse_dwarf(void) {
 
 // ================= EXTERN FUNCTIONS =====================
 
+static void _upf_process_relocation(const ElfW(Sym) * symbol_table, const char *string_table, ElfW(Xword) info, ElfW(Addr) offset) {
+    ElfW(Word) symbol_idx = _UPF_ELFW(R_SYM)(info);
+    ElfW(Word) rel_type = _UPF_ELFW(R_TYPE)(info);
+    if (symbol_idx == STN_UNDEF || rel_type != _UPF_ELF_GLOB_DAT) return;
+
+    ElfW(Sym) symbol = symbol_table[symbol_idx];
+    uintptr_t symbol_address = *((uintptr_t *) (_upf_state.base + offset));
+    const char *symbol_name = string_table + symbol.st_name;
+    _UPF_MAP_SET(&_upf_state.extern_functions, symbol_address, symbol_name);
+}
+
 // Extern function mapping: function pointer -> GOT -> RELA -> symbol -> name -> DIE.
 static void _upf_parse_extern_functions(void) {
     _UPF_ASSERT(_DYNAMIC != NULL);
 
     const char *string_table = NULL;
-    const Elf64_Sym *symbol_table = NULL;
-    const Elf64_Rela *rela_table = NULL;
+    const ElfW(Sym) *symbol_table = NULL;
+    const ElfW(Rela) *rela_table = NULL;
     int rela_size = -1;
-    for (const Elf64_Dyn *dyn = _DYNAMIC; dyn->d_tag != DT_NULL; dyn++) {
+    const ElfW(Rel) *rel_table = NULL;
+    int rel_size = -1;
+    for (const ElfW(Dyn) *dyn = _DYNAMIC; dyn->d_tag != DT_NULL; dyn++) {
         switch (dyn->d_tag) {
             case DT_STRTAB:  string_table = (char *) dyn->d_un.d_ptr; break;
-            case DT_SYMTAB:  symbol_table = (Elf64_Sym *) dyn->d_un.d_ptr; break;
-            case DT_RELA:    rela_table = (Elf64_Rela *) dyn->d_un.d_ptr; break;
-            case DT_RELASZ:  rela_size = dyn->d_un.d_val / sizeof(Elf64_Rela); break;
-            case DT_RELAENT: _UPF_ASSERT(dyn->d_un.d_val == sizeof(Elf64_Rela)); break;
+            case DT_SYMTAB:  symbol_table = (ElfW(Sym) *) dyn->d_un.d_ptr; break;
+            case DT_RELA:    rela_table = (ElfW(Rela) *) dyn->d_un.d_ptr; break;
+            case DT_RELASZ:  rela_size = dyn->d_un.d_val / sizeof(ElfW(Rela)); break;
+            case DT_RELAENT: _UPF_ASSERT(dyn->d_un.d_val == sizeof(ElfW(Rela))); break;
+            case DT_REL:     rel_table = (ElfW(Rel) *) dyn->d_un.d_ptr; break;
+            case DT_RELSZ:   rel_size = dyn->d_un.d_val / sizeof(ElfW(Rel)); break;
+            case DT_RELENT:  _UPF_ASSERT(dyn->d_un.d_val == sizeof(ElfW(Rel))); break;
         }
     }
-    if (string_table == NULL || symbol_table == NULL || rela_table == NULL || rela_size == -1) {
+    if (string_table == NULL || symbol_table == NULL
+        || ((rela_table == NULL || rela_size == -1) && (rel_table == NULL || rel_size == -1))) {
         _UPF_WARN("Failed to find all required ELF sections. Ignoring extern functions.");
         return;
     }
+    _UPF_ASSERT(rela_table == NULL || rel_table == NULL);
 
-    for (int i = 0; i < rela_size; i++) {
-        Elf64_Rela rela = rela_table[i];
+    if (rela_table != NULL && rela_size != -1) {
+        for (int i = 0; i < rela_size; i++) {
+            ElfW(Rela) rela = rela_table[i];
+            _upf_process_relocation(symbol_table, string_table, _UPF_ELFW(R_SYM)(rela.r_info), rela.r_offset);
+        }
+    }
 
-        int symbol_idx = ELF64_R_SYM(rela.r_info);
-        if (symbol_idx == STN_UNDEF) continue;
-
-        Elf64_Sym symbol = symbol_table[symbol_idx];
-        uint64_t symbol_address = *((uint64_t *) (_upf_state.base + rela.r_offset));
-        const char *symbol_name = string_table + symbol.st_name;
-        _UPF_MAP_SET(&_upf_state.extern_functions, symbol_address, symbol_name);
+    if (rel_table != NULL && rel_size != -1) {
+        for (int i = 0; i < rel_size; i++) {
+            ElfW(Rel) rel = rel_table[i];
+            _upf_process_relocation(symbol_table, string_table, _UPF_ELFW(R_SYM)(rel.r_info), rel.r_offset);
+        }
     }
 }
 
-static _upf_function *_upf_get_extern_function(uint64_t absolute_pc) {
+static _upf_function *_upf_get_extern_function(uintptr_t absolute_pc) {
     const char **opt_function_name = _UPF_MAP_GET(&_upf_state.extern_functions, absolute_pc);
     if (opt_function_name == NULL) return NULL;
     return _UPF_MAP_STR_GET(&_upf_state.current_cu->extern_functions, *opt_function_name);
@@ -2598,13 +2696,15 @@ static _upf_function *_upf_get_extern_function(uint64_t absolute_pc) {
 
 // ======================= ELF ============================
 
-static void _upf_parse_elf(void) {
+static void _upf_parse_elf(const char *object_path) {
+    _UPF_ASSERT(object_path != NULL && object_path[0] == '/');
+
     struct stat file_info;
-    if (stat("/proc/self/exe", &file_info) == -1) _UPF_ERROR("Failed to stat \"/proc/self/exe\": %s.", strerror(errno));
+    if (stat(object_path, &file_info) == -1) _UPF_ERROR("Failed to stat \"%s\": %s.", object_path, strerror(errno));
     size_t size = file_info.st_size;
 
-    int fd = open("/proc/self/exe", O_RDONLY);
-    if (fd == -1) _UPF_ERROR("Failed to open \"/proc/self/exe\": %s.", strerror(errno));
+    int fd = open(object_path, O_RDONLY);
+    if (fd == -1) _UPF_ERROR("Failed to open \"%s\": %s.", object_path, strerror(errno));
 
     // A new instance of file must be mmap-ed because the one loaded in memory
     // only contains information needed at runtime, and doesn't include debug
@@ -2617,21 +2717,23 @@ static void _upf_parse_elf(void) {
 
     close(fd);
 
-    const Elf64_Ehdr *header = (Elf64_Ehdr *) file;
+    const ElfW(Ehdr) *header = (ElfW(Ehdr) *) file;
 
     if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0 ||  //
-        header->e_ident[EI_CLASS] != ELFCLASS64 ||        //
         header->e_ident[EI_VERSION] != 1 ||               //
-        header->e_machine != EM_X86_64 ||                 //
         header->e_version != 1 ||                         //
-        header->e_shentsize != sizeof(Elf64_Shdr)) {
+        header->e_shentsize != sizeof(ElfW(Shdr))) {
         _UPF_ERROR("Unsupported or invalid ELF file.");
     }
 
-    const Elf64_Shdr *string_section = (Elf64_Shdr *) (file + header->e_shoff + header->e_shstrndx * header->e_shentsize);
+#if !_UPF_64BIT
+    if (header->e_ident[EI_CLASS] != ELFCLASS32) _UPF_ERROR("ELF must be 32-bit");
+#endif
+
+    const ElfW(Shdr) *string_section = (ElfW(Shdr) *) (file + header->e_shoff + header->e_shstrndx * header->e_shentsize);
     const char *string_table = (char *) (file + string_section->sh_offset);
 
-    const Elf64_Shdr *section = (Elf64_Shdr *) (file + header->e_shoff);
+    const ElfW(Shdr) *section = (ElfW(Shdr) *) (file + header->e_shoff);
     for (size_t i = 0; i < header->e_shnum; i++) {
         const char *name = string_table + section->sh_name;
 
@@ -2656,7 +2758,7 @@ static void _upf_parse_elf(void) {
     }
 
     if (_upf_state.die == NULL || _upf_state.abbrev == NULL || _upf_state.str == NULL) {
-        _UPF_ERROR("Failed to find the debugging information. %s", _UPF_NO_DEBUG_INFO_ERROR);
+        _UPF_ERROR("Failed to find the debugging information. Make sure that the executable is compiled with -g2 or -g3.");
     }
 }
 
@@ -2719,22 +2821,23 @@ static void _upf_tokenize(const char *string) {
 
     // Signs must be ordered from longest to shortest to prevent multicharacter
     // sign from being tokenized as multiple single character ones.
-    static const _upf_token signs[]
-        = {{_UPF_TT_ASSIGNMENT, "<<="}, {_UPF_TT_ASSIGNMENT, ">>="}, {_UPF_TT_ARROW_STAR, "->*"},
+    static const _upf_token signs[] = {
+        {_UPF_TT_ASSIGNMENT, "<<="}, {_UPF_TT_ASSIGNMENT, ">>="}, {_UPF_TT_ARROW_STAR, "->*"},
 
-           {_UPF_TT_ARROW, "->"},       {_UPF_TT_INCREMENT, "++"},   {_UPF_TT_INCREMENT, "--"},   {_UPF_TT_LOGICAL, "<="},
-           {_UPF_TT_LOGICAL, ">="},     {_UPF_TT_LOGICAL, "=="},     {_UPF_TT_LOGICAL, "!="},     {_UPF_TT_DOUBLE_AMPERSAND, "&&"},
-           {_UPF_TT_LOGICAL, "||"},     {_UPF_TT_LOGICAL, "<<"},     {_UPF_TT_LOGICAL, ">>"},     {_UPF_TT_ASSIGNMENT, "*="},
-           {_UPF_TT_ASSIGNMENT, "/="},  {_UPF_TT_ASSIGNMENT, "%="},  {_UPF_TT_ASSIGNMENT, "+="},  {_UPF_TT_ASSIGNMENT, "-="},
-           {_UPF_TT_ASSIGNMENT, "&="},  {_UPF_TT_ASSIGNMENT, "^="},  {_UPF_TT_ASSIGNMENT, "|="},  {_UPF_TT_DOT_STAR, ".*"},
-           {_UPF_TT_CXX_SCOPE, "::"},
+        {_UPF_TT_ARROW, "->"},       {_UPF_TT_INCREMENT, "++"},   {_UPF_TT_INCREMENT, "--"},   {_UPF_TT_LOGICAL, "<="},
+        {_UPF_TT_LOGICAL, ">="},     {_UPF_TT_LOGICAL, "=="},     {_UPF_TT_LOGICAL, "!="},     {_UPF_TT_DOUBLE_AMPERSAND, "&&"},
+        {_UPF_TT_LOGICAL, "||"},     {_UPF_TT_LOGICAL, "<<"},     {_UPF_TT_LOGICAL, ">>"},     {_UPF_TT_ASSIGNMENT, "*="},
+        {_UPF_TT_ASSIGNMENT, "/="},  {_UPF_TT_ASSIGNMENT, "%="},  {_UPF_TT_ASSIGNMENT, "+="},  {_UPF_TT_ASSIGNMENT, "-="},
+        {_UPF_TT_ASSIGNMENT, "&="},  {_UPF_TT_ASSIGNMENT, "^="},  {_UPF_TT_ASSIGNMENT, "|="},  {_UPF_TT_DOT_STAR, ".*"},
+        {_UPF_TT_CXX_SCOPE, "::"},
 
-           {_UPF_TT_COMMA, ","},        {_UPF_TT_AMPERSAND, "&"},    {_UPF_TT_STAR, "*"},         {_UPF_TT_OPEN_PAREN, "("},
-           {_UPF_TT_CLOSE_PAREN, ")"},  {_UPF_TT_DOT, "."},          {_UPF_TT_OPEN_BRACKET, "["}, {_UPF_TT_CLOSE_BRACKET, "]"},
-           {_UPF_TT_OPEN_BRACE, "{"},   {_UPF_TT_CLOSE_BRACE, "}"},  {_UPF_TT_QUESTION, "?"},     {_UPF_TT_COLON, ":"},
-           {_UPF_TT_LESS_THAN, "<"},    {_UPF_TT_GREATER_THAN, ">"}, {_UPF_TT_UNARY, "!"},        {_UPF_TT_PLUS, "+"},
-           {_UPF_TT_MINUS, "-"},        {_UPF_TT_UNARY, "~"},        {_UPF_TT_FACTOR, "/"},       {_UPF_TT_FACTOR, "%"},
-           {_UPF_TT_LOGICAL, "^"},      {_UPF_TT_LOGICAL, "|"},      {_UPF_TT_ASSIGNMENT, "="}};
+        {_UPF_TT_COMMA, ","},        {_UPF_TT_AMPERSAND, "&"},    {_UPF_TT_STAR, "*"},         {_UPF_TT_OPEN_PAREN, "("},
+        {_UPF_TT_CLOSE_PAREN, ")"},  {_UPF_TT_DOT, "."},          {_UPF_TT_OPEN_BRACKET, "["}, {_UPF_TT_CLOSE_BRACKET, "]"},
+        {_UPF_TT_OPEN_BRACE, "{"},   {_UPF_TT_CLOSE_BRACE, "}"},  {_UPF_TT_QUESTION, "?"},     {_UPF_TT_COLON, ":"},
+        {_UPF_TT_LESS_THAN, "<"},    {_UPF_TT_GREATER_THAN, ">"}, {_UPF_TT_UNARY, "!"},        {_UPF_TT_PLUS, "+"},
+        {_UPF_TT_MINUS, "-"},        {_UPF_TT_UNARY, "~"},        {_UPF_TT_FACTOR, "/"},       {_UPF_TT_FACTOR, "%"},
+        {_UPF_TT_LOGICAL, "^"},      {_UPF_TT_LOGICAL, "|"},      {_UPF_TT_ASSIGNMENT, "="}
+    };
 
 
     static const _upf_token keywords[] = {
@@ -2762,11 +2865,16 @@ static void _upf_tokenize(const char *string) {
     };
 
     static const _upf_token cxx_keywords[] = {
-        {_UPF_TT_STRUCT, "class"},          {_UPF_TT_ALIGNOF, "alignas"},
-        {_UPF_TT_CXX_CAST, "static_cast"},  {_UPF_TT_CXX_CAST, "reinterpret_cast"},
-        {_UPF_TT_CXX_CAST, "dynamic_cast"}, {_UPF_TT_CXX_CAST, "const_cast"},
-        {_UPF_TT_CXX_NEW, "new"},           {_UPF_TT_CXX_DECLTYPE, "decltype"},
-        {_UPF_TT_CXX_NOEXCEPT, "noexcept"}, {_UPF_TT_CXX_TYPEID, "typeid"},
+        {_UPF_TT_STRUCT, "class"},
+        {_UPF_TT_ALIGNOF, "alignas"},
+        {_UPF_TT_CXX_CAST, "static_cast"},
+        {_UPF_TT_CXX_CAST, "reinterpret_cast"},
+        {_UPF_TT_CXX_CAST, "dynamic_cast"},
+        {_UPF_TT_CXX_CAST, "const_cast"},
+        {_UPF_TT_CXX_NEW, "new"},
+        {_UPF_TT_CXX_DECLTYPE, "decltype"},
+        {_UPF_TT_CXX_NOEXCEPT, "noexcept"},
+        {_UPF_TT_CXX_TYPEID, "typeid"},
     };
 
     const char *ch = string;
@@ -2968,8 +3076,13 @@ static void *_upf_ns_bfs(_upf_ns *ns, _upf_ns_cb callback, const void *data) {
     return result;
 }
 
-static void *_upf_scope_search(bool search_global_scope, const _upf_cstr_vec *ns_names, _upf_ns_cb ns_callback,
-                               _upf_scope_cb scope_callback, const void *data) {
+static void *_upf_scope_search(
+    bool search_global_scope,
+    const _upf_cstr_vec *ns_names,
+    _upf_ns_cb ns_callback,
+    _upf_scope_cb scope_callback,
+    const void *data
+) {
     if (search_global_scope) {
         _upf_ns *ns = _upf_scope_resolve_ns(ns_names, &_upf_state.current_cu->scope);
         return _upf_ns_bfs(ns, ns_callback, data);
@@ -3033,7 +3146,7 @@ static void *_upf_scope_get_type_cb(const _upf_scope *scope, const void *data) {
 
 static void *_upf_ns_get_function_by_pc_cb(const _upf_ns *ns, const void *data) {
     _UPF_ASSERT(ns != NULL && data != NULL);
-    uint64_t pc = *((const uint64_t *) data);
+    uintptr_t pc = *((const uintptr_t *) data);
     for (uint32_t i = 0; i < ns->functions.capacity; i++) {
         if (ns->functions.data[i].hash == 0) continue;
         if (ns->functions.data[i].value.pc == pc) return &ns->functions.data[i].value;
@@ -3041,7 +3154,7 @@ static void *_upf_ns_get_function_by_pc_cb(const _upf_ns *ns, const void *data) 
     return NULL;
 }
 
-static _upf_function *_upf_get_function_by_pc(uint64_t pc) {
+static _upf_function *_upf_get_function_by_pc(uintptr_t pc) {
     for (uint32_t i = 0; i < _upf_state.current_scopes.length; i++) {
         _upf_scope *scope = _upf_state.current_scopes.data[i];
         for (uint32_t j = 0; j < scope->nss.length; j++) {
@@ -3290,8 +3403,8 @@ static _upf_type *_upf_identifier(void) {
         identifier = _upf_expect_token(_UPF_TT_IDENTIFIER).string;
     }
 
-    return (_upf_type *) _upf_scope_search(leading_scope_op, &ns_names, _upf_ns_get_identifier_cb, _upf_scope_get_identifier_cb,
-                                           identifier);
+    void *type = _upf_scope_search(leading_scope_op, &ns_names, _upf_ns_get_identifier_cb, _upf_scope_get_identifier_cb, identifier);
+    return (_upf_type *) type;
 }
 
 static _upf_type *_upf_generic(void) { _UPF_ERROR("Generics are not supported at %s:%d.", _upf_state.file_path, _upf_state.line); }
@@ -3375,7 +3488,7 @@ static _upf_type *_upf_cxx_noexcept(void) {
 
 static _upf_type *_upf_cxx_typeid(void) { _UPF_ERROR("typeid is not supported at %s:%d.", _upf_state.file_path, _upf_state.line); }
 
-static _upf_type *_upf_cxx_lambda(void) { _UPF_ERROR("lambdas are not supported at %s:%d.", _upf_state.file_path, _upf_state.line); }
+static _upf_type *_upf_cxx_lambda(void) { _UPF_ERROR("Lambdas are not supported at %s:%d.", _upf_state.file_path, _upf_state.line); }
 
 static _upf_type *_upf_unary(void) {
     _upf_token unop = _upf_consume_token();
@@ -3581,31 +3694,98 @@ static void _upf_init_parsing_rules(void) {
 
 // ================== /proc/pid/maps ======================
 
-static _upf_range_vec _upf_get_readable_addresses(void) {
+typedef bool (*_upf_iterate_maps_cb)(
+    uintptr_t start,
+    uintptr_t end,
+    bool readable,
+    bool executable,
+    uintmax_t offset,
+    const char *path,
+    void *data
+);
+
+static void _upf_iterate_maps(_upf_iterate_maps_cb callback, void *data) {
+    _UPF_ASSERT(callback != NULL && data != NULL);
+
     FILE *file = fopen("/proc/self/maps", "r");
     if (file == NULL) _UPF_ERROR("Failed to open \"/proc/self/maps\": %s.", strerror(errno));
 
-    _upf_range_vec ranges = _UPF_ZERO_INIT;
-    _upf_range range = _UPF_ZERO_INIT;
-    char read_bit = '-';
-    size_t length = 0;
-    char *line = NULL;
-    ssize_t read;
-    while ((read = getline(&line, &length, file)) != -1) {
-        if (read == 0) continue;
-        if (line[read - 1] == '\n') line[read - 1] = '\0';
+    char line[8192];
+    uintptr_t start, end;
+    char r, x;
+    uintmax_t offset;
+    int n;
+    while (fgets(line, sizeof(line), file) != NULL) {
+        size_t length = strlen(line);
+        if (length + 1 == sizeof(line)) _UPF_ERROR("Failed to parse \"/proc/self/maps\": line is too long.");
 
-        if (sscanf(line, "%lx-%lx %c%*s %*x %*x:%*x %*u", &range.start, &range.end, &read_bit) != 3) {
-            free(line);
-            fclose(file);
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %c%*c%c%*c %" SCNxMAX " %*s %*s %n", &start, &end, &r, &x, &offset, &n) != 5) {
             _UPF_ERROR("Failed to parse \"/proc/self/maps\": invalid format.");
         }
 
-        if (read_bit == 'r') _UPF_VECTOR_PUSH(&ranges, range);
+        // Remove the trialing newline.
+        if (line[length - 1] == '\n') line[length - 1] = '\0';
+        if (callback(start, end, r == 'r', x == 'x', offset, line + n, data)) break;
     }
-    free(line);
+    if (ferror(file)) _UPF_ERROR("Failed to read \"/proc/self/maps\": %s.", strerror(errno));
     fclose(file);
+}
 
+typedef struct {
+    const void **address;
+    const char **path;
+} _upf_get_this_object_cb_data;
+
+static bool _upf_get_this_object_cb(
+    uintptr_t start,
+    uintptr_t end,
+    bool readable,
+    bool executable,
+    uintmax_t offset,
+    const char *path,
+    void *raw_data
+) {
+    const uintptr_t function_address = (uintptr_t) _upf_get_this_object_cb;
+    if (!(start <= function_address && function_address < end && readable && executable)) return false;
+
+    _upf_get_this_object_cb_data *data = (_upf_get_this_object_cb_data *) raw_data;
+    *data->path = _upf_copy_string(path);
+    _UPF_ASSERT(offset < UINTPTR_MAX);
+    *data->address = (void *) (start - (uintptr_t) offset);
+    return true;
+}
+
+// Finds address and path of the current object (executable or shared library).
+static void _upf_get_this_object(const char **path, const void **address) {
+    _UPF_ASSERT(path != NULL && address != NULL);
+    _upf_get_this_object_cb_data data = _UPF_ZERO_INIT;
+    data.path = path;
+    data.address = address;
+    _upf_iterate_maps(_upf_get_this_object_cb, (void *) &data);
+    if (*path == NULL || *address == NULL) _UPF_ERROR("Failed to find information about the current object.");
+}
+
+static bool _upf_get_readable_addresses_cb(
+    uintptr_t start,
+    uintptr_t end,
+    bool readable,
+    __attribute__((unused)) bool executable,
+    __attribute__((unused)) uintmax_t offset,
+    __attribute__((unused)) const char *path,
+    void *raw_data
+) {
+    if (readable) {
+        _upf_range range = _UPF_ZERO_INIT;
+        range.start = start;
+        range.end = end;
+        _UPF_VECTOR_PUSH((_upf_range_vec *) raw_data, range);
+    }
+    return false;
+}
+
+static _upf_range_vec _upf_get_readable_addresses(void) {
+    _upf_range_vec ranges = _UPF_ZERO_INIT;
+    _upf_iterate_maps(_upf_get_readable_addresses_cb, (void *) &ranges);
     return ranges;
 }
 
@@ -3613,7 +3793,7 @@ static const void *_upf_get_memory_region_end(const void *ptr) {
     _UPF_ASSERT(ptr != NULL);
     for (uint32_t i = 0; i < _upf_state.addresses.length; i++) {
         _upf_range range = _upf_state.addresses.data[i];
-        if ((void *) range.start <= ptr && ptr <= (void *) range.end) return (void *) range.end;
+        if ((void *) range.start <= ptr && ptr < (void *) range.end) return (void *) range.end;
     }
     return NULL;
 }
@@ -3622,7 +3802,7 @@ static bool _upf_is_memory_readable(const uint8_t *ptr, size_t size) {
     _UPF_ASSERT(ptr != NULL);
     if (_upf_get_memory_region_end(ptr) == NULL) return false;
     if (size == 0 || size == SIZE_MAX) return true;
-    return _upf_get_memory_region_end(ptr + size) != NULL;
+    return _upf_get_memory_region_end(ptr + (size - 1)) != NULL;
 }
 
 // ===================== PRINTING =========================
@@ -3697,8 +3877,12 @@ static bool _upf_is_primitive(const _upf_type *type) {
     _UPF_ASSERT(false && "Unreachable");
 }
 
-__attribute__((no_sanitize_address)) static void _upf_find_repeating_structs(_upf_struct_info_map *structs, const uint8_t *data,
-                                                                             const _upf_type *type, int depth) {
+__attribute__((no_sanitize_address)) static void _upf_find_repeating_structs(
+    _upf_struct_info_map *structs,
+    const uint8_t *data,
+    const _upf_type *type,
+    int depth
+) {
     _UPF_ASSERT(structs != NULL && type != NULL);
 
     if (UPRINTF_MAX_DEPTH >= 0 && depth >= UPRINTF_MAX_DEPTH) return;
@@ -3817,7 +4001,7 @@ __attribute__((no_sanitize_address)) static void _upf_print_bit_field(const uint
     int bit_offset = total_bit_offset % 8;
     uint8_t value = (data[byte_offset] >> bit_offset) & ((1 << bit_size) - 1);
 
-    _upf_bprintf("%hhu <%d bit%s>", value, bit_size, bit_size > 1 ? "s" : "");
+    _upf_bprintf("%" PRIu8 " <%d bit%s>", value, bit_size, bit_size > 1 ? "s" : "");
 }
 
 __attribute__((no_sanitize_address)) static void _upf_print_char_ptr(const char *str) {
@@ -3852,8 +4036,12 @@ __attribute__((no_sanitize_address)) static void _upf_print_char_ptr(const char 
 // [] -> arrays
 // {} -> structs/unions
 // <> -> meta information, e.g. unnamed, unknown, invalid, out of bounds, truncated, etc.
-__attribute__((no_sanitize_address)) static void _upf_print_type(_upf_struct_info_map *structs, const uint8_t *data, const _upf_type *type,
-                                                                 int depth) {
+__attribute__((no_sanitize_address)) static void _upf_print_type(
+    _upf_struct_info_map *structs,
+    const uint8_t *data,
+    const _upf_type *type,
+    int depth
+) {
     _UPF_ASSERT(structs != NULL && type != NULL);
 
     if (UPRINTF_MAX_DEPTH >= 0 && depth >= UPRINTF_MAX_DEPTH) {
@@ -3903,13 +4091,13 @@ __attribute__((no_sanitize_address)) static void _upf_print_type(_upf_struct_inf
             _upf_struct_info *opt_info = _UPF_MAP_GET(structs, key);
             if (opt_info != NULL && opt_info->is_repeating) {
                 if (opt_info->is_visited) {
-                    _upf_bprintf("<points to #%d>", opt_info->id);
+                    _upf_bprintf("<points to #%" PRIu32 ">", opt_info->id);
                     return;
                 }
 
                 opt_info->is_visited = true;
                 opt_info->id = _upf_state.struct_id++;
-                _upf_bprintf("<#%d> ", opt_info->id);
+                _upf_bprintf("<#%" PRIu32 "> ", opt_info->id);
             }
 
             _upf_bprintf("{\n");
@@ -4066,11 +4254,11 @@ __attribute__((no_sanitize_address)) static void _upf_print_type(_upf_struct_inf
         case _UPF_TK_FUNCTION:       {
             const _upf_function *function = type->as.function.function_ptr;
             if (function == NULL) {
-                uint64_t relative_function_pc = data - _upf_state.base;
+                ptrdiff_t relative_function_pc = data - _upf_state.base;
                 function = _upf_get_function_by_pc(relative_function_pc);
             }
             if (function == NULL) {
-                uint64_t absolute_function_pc = (uint64_t) data;
+                uintptr_t absolute_function_pc = (uintptr_t) data;
                 function = _upf_get_extern_function(absolute_function_pc);
             }
 
@@ -4097,37 +4285,37 @@ __attribute__((no_sanitize_address)) static void _upf_print_type(_upf_struct_inf
             }
             _upf_bprintf("))");
         } break;
-        case _UPF_TK_U1: _upf_bprintf("%hhu", *data); break;
+        case _UPF_TK_U1: _upf_bprintf("%" PRIu8, *data); break;
         case _UPF_TK_U2: {
             uint16_t temp;
             memcpy(&temp, data, sizeof(temp));
-            _upf_bprintf("%hu", temp);
+            _upf_bprintf("%" PRIu16, temp);
         } break;
         case _UPF_TK_U4: {
             uint32_t temp;
             memcpy(&temp, data, sizeof(temp));
-            _upf_bprintf("%u", temp);
+            _upf_bprintf("%" PRIu32, temp);
         } break;
         case _UPF_TK_U8: {
             uint64_t temp;
             memcpy(&temp, data, sizeof(temp));
-            _upf_bprintf("%lu", temp);
+            _upf_bprintf("%" PRIu64, temp);
         } break;
-        case _UPF_TK_S1: _upf_bprintf("%hhd", *((const int8_t *) data)); break;
+        case _UPF_TK_S1: _upf_bprintf("%" PRIi8, *((const int8_t *) data)); break;
         case _UPF_TK_S2: {
             int16_t temp;
             memcpy(&temp, data, sizeof(temp));
-            _upf_bprintf("%hd", temp);
+            _upf_bprintf("%" PRIi16, temp);
         } break;
         case _UPF_TK_S4: {
             int32_t temp;
             memcpy(&temp, data, sizeof(temp));
-            _upf_bprintf("%d", temp);
+            _upf_bprintf("%" PRIi32, temp);
         } break;
         case _UPF_TK_S8: {
             int64_t temp;
             memcpy(&temp, data, sizeof(temp));
-            _upf_bprintf("%ld", temp);
+            _upf_bprintf("%" PRIi64, temp);
         } break;
         case _UPF_TK_F4: {
             float temp;
@@ -4142,12 +4330,12 @@ __attribute__((no_sanitize_address)) static void _upf_print_type(_upf_struct_inf
         case _UPF_TK_BOOL:  _upf_bprintf("%s", *data ? "true" : "false"); break;
         case _UPF_TK_SCHAR: {
             char ch = *((char *) data);
-            _upf_bprintf("%hhd", ch);
+            _upf_bprintf("%" PRIi8, (int8_t) ch);
             if (_upf_is_printable(ch)) _upf_bprintf(" ('%s')", _upf_escape_char(ch));
         } break;
         case _UPF_TK_UCHAR: {
             char ch = *((char *) data);
-            _upf_bprintf("%hhu", ch);
+            _upf_bprintf("%" PRIu8, (uint8_t) ch);
             if (_upf_is_printable(ch)) _upf_bprintf(" ('%s')", _upf_escape_char(ch));
         } break;
         case _UPF_TK_VOID:    _UPF_WARN("Void must be a pointer. Ignoring this type."); break;
@@ -4157,44 +4345,23 @@ __attribute__((no_sanitize_address)) static void _upf_print_type(_upf_struct_inf
 
 // ======================== PC ============================
 
-static int _upf_phdr_callback(struct dl_phdr_info *raw_info, __attribute__((unused)) size_t size, void *raw_data) {
-    _upf_dl_phdr_info *info = (_upf_dl_phdr_info *) raw_info;
-    void **data = (void **) raw_data;
-
-    // Empty name indicates the current executable.
-    if (info->dlpi_name[0] == '\0') {
-        *data = (void *) info->dlpi_addr;
-        // Return non-zero value to exit early.
-        return 1;
-    }
-    return 0;
-}
-
-// Returns address at which the current executable is loaded in memory.
-static void *_upf_get_this_executable_address(void) {
-    void *base = NULL;
-    dl_iterate_phdr(&_upf_phdr_callback, &base);
-    _UPF_ASSERT(base != NULL);
-    return base;
-}
-
-static bool _upf_is_in_range(uint64_t addr, _upf_range_vec ranges) {
+static bool _upf_is_in_ranges(uint64_t addr, _upf_range_vec ranges) {
     for (uint32_t i = 0; i < ranges.length; i++) {
         if (ranges.data[i].start <= addr && addr < ranges.data[i].end) return true;
     }
     return false;
 }
 
-static _upf_cu *_upf_find_cu(uint64_t pc) {
+static _upf_cu *_upf_find_cu(uintptr_t pc) {
     for (uint32_t i = 0; i < _upf_state.cus.length; i++) {
-        if (_upf_is_in_range(pc, _upf_state.cus.data[i].scope.ranges)) return &_upf_state.cus.data[i];
+        if (_upf_is_in_ranges(pc, _upf_state.cus.data[i].scope.ranges)) return &_upf_state.cus.data[i];
     }
     return NULL;
 }
 
-static void _upf_find_scopes(uint64_t pc, _upf_scope *scope, _upf_scope_vec *result) {
+static void _upf_find_scopes(uintptr_t pc, _upf_scope *scope, _upf_scope_vec *result) {
     for (uint32_t i = 0; i < scope->scopes.length; i++) {
-        if (!_upf_is_in_range(pc, scope->scopes.data[i]->ranges)) continue;
+        if (!_upf_is_in_ranges(pc, scope->scopes.data[i]->ranges)) continue;
         _upf_find_scopes(pc, scope->scopes.data[i], result);
         _UPF_VECTOR_PUSH(result, scope->scopes.data[i]);
         break;
@@ -4220,8 +4387,12 @@ static const _upf_type *_upf_get_arg_type(const char *arg) {
 
     if (type == NULL) _UPF_ERROR("Failed to find the type of \"%s\" at %s:%d.", arg, _upf_state.file_path, _upf_state.line);
     if (type->kind == _UPF_TK_VOID) {
-        _UPF_ERROR("Cannot print type void. To print the void pointer itself, get a pointer to \"%s\" at %s:%d.", arg, _upf_state.file_path,
-                   _upf_state.line);
+        _UPF_ERROR(
+            "Cannot print type void. To print the void pointer itself, get a pointer to \"%s\" at %s:%d.",
+            arg,
+            _upf_state.file_path,
+            _upf_state.line
+        );
     }
     return type;
 }
@@ -4242,11 +4413,13 @@ static void _upf_add_ignored_types(void) {
 __attribute__((constructor)) static void _upf_init(void) {
     if (setjmp(_upf_state.error_jmp_buf) != 0) return;
 
-    _upf_state.base = (const uint8_t *) _upf_get_this_executable_address();
+    const char *object_path = NULL;
+    _upf_get_this_object(&object_path, (const void **) &_upf_state.base);
+
     _upf_init_parsing_rules();
     _upf_add_ignored_types();
 
-    _upf_parse_elf();
+    _upf_parse_elf(object_path);
     _upf_parse_extern_functions();
     _upf_parse_dwarf();
 
@@ -4287,10 +4460,10 @@ __attribute__((noinline)) void _upf_uprintf(const char *file_path, int line, con
 
     uint8_t *pc_ptr = (uint8_t *) __builtin_extract_return_addr(__builtin_return_address(0));
     _UPF_ASSERT(pc_ptr != NULL);
-    uint64_t pc = pc_ptr - _upf_state.base;
+    ptrdiff_t pc = pc_ptr - _upf_state.base;
 
     _upf_state.current_cu = _upf_find_cu(pc);
-    _UPF_ASSERT(_upf_state.current_cu != NULL);
+    if (_upf_state.current_cu == NULL) _UPF_ERROR("Failed to find the current compilation unit.");
 
     _upf_state.current_scopes.length = 0;
     _upf_find_scopes(pc, &_upf_state.current_cu->scope, &_upf_state.current_scopes);
@@ -4342,13 +4515,15 @@ __attribute__((noinline)) void _upf_uprintf(const char *file_path, int line, con
 
 // ====================== UNDEF ===========================
 
+#undef _UPF_64BIT
+#undef _UPF_ELFW
+#undef _UPF_ELF_GLOB_DAT
 #undef _UPF_SET_TEST_STATUS
 #undef _UPF_LOG
 #undef _UPF_WARN
 #undef _UPF_ERROR
 #undef _UPF_ASSERT
 #undef _UPF_OUT_OF_MEMORY
-#undef _UPF_NO_DEBUG_INFO_ERROR
 #undef _UPF_ZERO_INIT
 #undef _UPF_VECTOR_TYPEDEF
 #undef _UPF_MAP_TYPEDEF

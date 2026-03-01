@@ -26,8 +26,8 @@ WARN = -Wall -Wextra -Wnull-dereference -Wvla -Wformat=2 -Wno-format-nonliteral 
 SANZ = -fno-common -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
 CPPFLAGS += -I./include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=4000000000
-CFLAGS   += -MMD -MP $(WARN) -fpie
-LDFLAGS  += -pie -lm
+CFLAGS   += -MMD -MP $(WARN)
+LDFLAGS  += -lm
 
 .PHONY: debug release
 debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_COMMIT
