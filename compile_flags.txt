@@ -2,5 +2,3 @@
 -D_GNU_SOURCE
 -I
 ./include
--I
-../STC/include

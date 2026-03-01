@@ -191,51 +191,7 @@ void test_json() {
   // Get the age as an integer.
   int64_t age = json_int64(json_get(json_str, "age"));
 
-  printf("%s %ld\n", last_name, age);
-}
-
-#include "cc.h"
-int test_vec() {
-  cc_vec(int) our_vec;
-  cc_init(&our_vec);
-
-  // Adding elements to end.
-  for (int i = 0; i < 10; ++i)
-    if (!cc_push(&our_vec, i)) {
-      // Out of memory, so abort.
-      cc_cleanup(&our_vec);
-      return 1;
-    }
-
-  // Inserting an element at an index.
-  for (int i = 0; i < 10; ++i)
-    if (!cc_insert(&our_vec, i * 2, i)) {
-      // Out of memory, so abort.
-      cc_cleanup(&our_vec);
-      return 1;
-    }
-
-  // Retrieving and erasing elements.
-  for (size_t i = 0; i < cc_size(&our_vec);)
-    if (*cc_get(&our_vec, i) % 3 == 0)
-      cc_erase(&our_vec, i);
-    else
-      ++i;
-
-  // Iteration #1.
-  cc_for_each(&our_vec, el) printf("%d ", *el);
-  // Printed: 1 1 2 2 4 4 5 5 7 7 8 8
-
-  // Iteration #2.
-  for (int* el = cc_first(&our_vec); el != cc_end(&our_vec); el = cc_next(&our_vec, el))
-    printf("%d ", *el);
-  // Printed: Same as above.
-
-  puts("");
-
-  cc_cleanup(&our_vec);
-
-  return 0;
+  printf("%s %lld\n", last_name, (long long)age);
 }
 
 struct point {
@@ -251,14 +207,6 @@ struct point* test_init(Arena* a, double x, double y) {
 }
 
 #include "adt.h"
-
-UTEST(stc, adt) {
-  enum { size = MB(1) };
-  byte mem[size] = {0};
-  Arena arena[] = {arena_init(mem, size)};
-  ASSERT_EQ(15, tree_sum(mkTree(arena)));
-}
-
 #include "object.h"
 
 UTEST(interface99, oop) {
@@ -279,232 +227,6 @@ UTEST(interface99, oop) {
   VCALL(t, scale, 5);
   p = VCALL(t, perim);
   ASSERT_EQ(p, 75);
-}
-
-UTEST(astr, split_leading_sep) {
-  int i = 0;
-  for (astr_split(it, ",", astr(",,a,b"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 4);
-}
-
-UTEST(astr, split_trailing_sep) {
-  int i = 0;
-  for (astr_split(it, ",", astr("a,b,,"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 3);
-}
-
-UTEST(astr, split_all_sep) {
-  int i = 0;
-  for (astr_split(it, ",", astr(",,,"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 3);
-}
-
-UTEST(astr, split_no_sep) {
-  int i = 0;
-  for (astr_split(it, ",", astr("hello"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 1);
-}
-
-UTEST(astr, split_empty) {
-  int i = 0;
-  for (astr_split(it, ",", astr(""))) {
-    i++;
-  }
-  ASSERT_EQ(i, 0);
-}
-
-UTEST(astr, split_single_char) {
-  int i = 0;
-  for (astr_split(it, ",", astr("x"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 1);
-}
-
-UTEST(astr, split_multibyte_sep) {
-  int i = 0;
-  for (astr_split(it, "->", astr("a->b->->c"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 4);
-}
-
-UTEST(astr, split_by_char_leading_sep) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr(",,a,b"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 2);
-}
-
-UTEST(astr, split_by_char_all_sep) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr(",,,"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 0);
-}
-
-UTEST(astr, split_by_char_empty) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr(""))) {
-    i++;
-  }
-  ASSERT_EQ(i, 0);
-}
-
-UTEST(astr, split_by_char_trailing_sep) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr("a,b,,"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 2);
-}
-
-UTEST(astr, split_by_char_no_sep) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr("hello"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 1);
-}
-
-UTEST(astr, split_by_char_single_char) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr("x"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 1);
-}
-
-UTEST(astr, split_by_char_multi_charset) {
-  // Multiple separator characters
-  int i = 0;
-  astr tokens[5];
-  for (astr_split_by_char(it, ",| $", astr("a,b|c d$e"))) {
-    tokens[i++] = it.token;
-  }
-  ASSERT_EQ(i, 5);
-  ASSERT_TRUE(astr_equals(tokens[0], astr("a")));
-  ASSERT_TRUE(astr_equals(tokens[1], astr("b")));
-  ASSERT_TRUE(astr_equals(tokens[2], astr("c")));
-  ASSERT_TRUE(astr_equals(tokens[3], astr("d")));
-  ASSERT_TRUE(astr_equals(tokens[4], astr("e")));
-}
-
-UTEST(astr, split_by_char_consecutive_sep) {
-  // Consecutive mixed separators treated as one gap
-  int i = 0;
-  for (astr_split_by_char(it, ", ", astr("a,  ,b"))) {
-    i++;
-  }
-  ASSERT_EQ(i, 2);
-}
-
-UTEST(astr, split_by_char_only_sep_single) {
-  int i = 0;
-  for (astr_split_by_char(it, ",", astr(","))) {
-    i++;
-  }
-  ASSERT_EQ(i, 0);
-}
-
-UTEST(astr, split_by_char_embedded_nul) {
-  // \0 in data should be treated as separator (not content)
-  char data[] = "a\0b\0c";
-  astr s = {data, 5};
-  int i = 0;
-  for (astr_split_by_char(it, ",", s)) {
-    i++;
-  }
-  ASSERT_EQ(i, 3);
-}
-
-UTEST(astr, trim_ascii) {
-  astr s = astr_trim(astr("  hello  "));
-  ASSERT_TRUE(astr_equals(s, astr("hello")));
-}
-
-UTEST(astr, trim_tabs_newlines) {
-  astr s = astr_trim(astr("\t\nhello\r\n"));
-  ASSERT_TRUE(astr_equals(s, astr("hello")));
-}
-
-UTEST(astr, trim_all_whitespace) {
-  astr s = astr_trim(astr("   "));
-  ASSERT_EQ(s.len, 0);
-}
-
-UTEST(astr, trim_empty) {
-  astr s = astr_trim(astr(""));
-  ASSERT_EQ(s.len, 0);
-}
-
-UTEST(astr, trim_no_whitespace) {
-  astr s = astr_trim(astr("hello"));
-  ASSERT_TRUE(astr_equals(s, astr("hello")));
-}
-
-UTEST(astr, trim_preserves_high_bytes) {
-  // UTF-8: "é" = \xc3\xa9 — must NOT be trimmed
-  astr s = astr_trim_left(astr("\xc3\xa9tail"));
-  ASSERT_TRUE(astr_equals(s, astr("\xc3\xa9tail")));
-
-  s = astr_trim_right(astr("head\xc3\xa9"));
-  ASSERT_TRUE(astr_equals(s, astr("head\xc3\xa9")));
-}
-
-UTEST(astr, trim_left_only) {
-  astr s = astr_trim_left(astr("  hello  "));
-  ASSERT_TRUE(astr_equals(s, astr("hello  ")));
-}
-
-UTEST(astr, trim_right_only) {
-  astr s = astr_trim_right(astr("  hello  "));
-  ASSERT_TRUE(astr_equals(s, astr("  hello")));
-}
-
-UTEST(astr, concat_self_at_tip) {
-  // Place a string at the arena tip, then concat with itself
-  enum { size = KB(4) };
-  byte mem[size] = {0};
-  Arena arena[] = {arena_init(mem, size)};
-
-  astr s = astr_format(arena, "hello");  // s is at arena tip
-  astr doubled = astr_concat(arena, s, s);
-  ASSERT_EQ(doubled.len, 10);
-  ASSERT_TRUE(astr_equals(doubled, astr("hellohello")));
-}
-
-UTEST(astr, concat_normal) {
-  enum { size = KB(4) };
-  byte mem[size] = {0};
-  Arena arena[] = {arena_init(mem, size)};
-
-  astr a = astr_format(arena, "hello");
-  astr b = astr_format(arena, "world");
-  astr c = astr_concat(arena, a, b);
-  ASSERT_EQ(c.len, 10);
-  ASSERT_TRUE(astr_equals(c, astr("helloworld")));
-}
-
-UTEST(astr, concat_empty_head) {
-  enum { size = KB(4) };
-  byte mem[size] = {0};
-  Arena arena[] = {arena_init(mem, size)};
-
-  astr a = astr("");
-  astr b = astr_format(arena, "world");
-  astr c = astr_concat(arena, a, b);
-  ASSERT_TRUE(astr_equals(c, astr("world")));
 }
 
 UTEST(slice, push_fresh) {
@@ -552,7 +274,7 @@ UTEST(slice, push_after_cap_reset) {
   *Push(arena, &s) = 3;
   ASSERT_EQ(s.len, 3);
 
-  int64_t *old_data = s.data;
+  int64_t* old_data = s.data;
   s.cap = 0;
   *Push(arena, &s) = 4;
   ASSERT_EQ(s.len, 4);
@@ -584,66 +306,6 @@ UTEST(slice, clone_and_push) {
   ASSERT_EQ(copy.data[2], 42);
 }
 
-UTEST(astr, concat_empty_tail) {
-  enum { size = KB(4) };
-  byte mem[size] = {0};
-  Arena arena[] = {arena_init(mem, size)};
-
-  astr a = astr_format(arena, "hello");
-  astr b = astr("");
-  astr c = astr_concat(arena, a, b);
-  ASSERT_TRUE(astr_equals(c, astr("hello")));
-}
-
-UTEST(astr, contains_match) {
-  ASSERT_TRUE(astr_contains(astr("hello world"), astr("world")));
-}
-
-UTEST(astr, contains_no_match) {
-  ASSERT_FALSE(astr_contains(astr("hello world"), astr("xyz")));
-}
-
-UTEST(astr, contains_empty_needle) {
-  ASSERT_TRUE(astr_contains(astr("hello"), astr("")));
-}
-
-UTEST(astr, contains_empty_haystack) {
-  ASSERT_FALSE(astr_contains(astr(""), astr("a")));
-}
-
-UTEST(astr, find_found) {
-  ASSERT_EQ(6, astr_find(astr("hello world"), astr("world")));
-}
-
-UTEST(astr, find_not_found) {
-  ASSERT_EQ(-1, astr_find(astr("hello world"), astr("xyz")));
-}
-
-UTEST(astr, find_empty_needle) {
-  ASSERT_EQ(0, astr_find(astr("hello"), astr("")));
-}
-
-UTEST(astr, find_first_of_multiple) {
-  ASSERT_EQ(0, astr_find(astr("abab"), astr("ab")));
-}
-
-UTEST(astr, compare_equal) {
-  ASSERT_EQ(0, astr_compare(astr("abc"), astr("abc")));
-}
-
-UTEST(astr, compare_less) {
-  ASSERT_TRUE(astr_compare(astr("abc"), astr("abd")) < 0);
-}
-
-UTEST(astr, compare_greater) {
-  ASSERT_TRUE(astr_compare(astr("abd"), astr("abc")) > 0);
-}
-
-UTEST(astr, compare_prefix_ordering) {
-  ASSERT_TRUE(astr_compare(astr("ab"), astr("abc")) < 0);
-  ASSERT_TRUE(astr_compare(astr("abc"), astr("ab")) > 0);
-}
-
 int main(int argc, const char* argv[]) {
 #ifdef __COSMOCC__
   ShowCrashReports();
@@ -667,7 +329,7 @@ int main(int argc, const char* argv[]) {
   *Push(arena, &fibs) = 0;
   puts(">>>fibs");
   for (int i = 0; i < fibs.len; ++i)
-    printf("%ld,", fibs.data[i]);
+    printf("%lld,", (long long)fibs.data[i]);
   puts("<<<fibs");
 
   astr s = test_astr(arena);

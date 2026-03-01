@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "arena.h"
-#include "cc.h"
 #include "debug.h"
 #include "utest.h"
 
@@ -12,16 +11,12 @@ static inline void vt_arena_free(void* ptr, size_t size, Arena** ctx) {
   arena_free(ptr, size, *ctx);
 }
 
-static inline size_t astr_wyhash(astr key) {
-  return cc_wyhash(key.data, key.len);
-}
-
 #define NAME      Map_astr_astr
 #define KEY_TY    astr
 #define VAL_TY    astr
 #define CTX_TY    Arena*
 #define CMPR_FN   astr_equals
-#define HASH_FN   astr_wyhash
+#define HASH_FN   astr_hash
 #define MALLOC_FN vt_arena_malloc
 #define FREE_FN   vt_arena_free
 #include "verstable.h"

@@ -14,7 +14,7 @@ all: debug
 NAME = cmd
 BUILD_DIR := ./build
 BIN_TARGET = $(BUILD_DIR)/$(NAME)
-LIB_TARGET = $(BUILD_DIR)/lib$(NAME).so
+LIB_TARGET = $(BUILD_DIR)/lib$(NAME).a
 
 SRC := $(shell find . -name '*.c')
 LIB_SRC := $(shell find . -name '*.c' -not -name $(NAME).c)
@@ -22,11 +22,12 @@ OBJ := $(SRC:%.c=$(BUILD_DIR)/%.o)
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 DEP := $(OBJ:.o=.d)
 
-WARN = -Wall -Wextra -Wnull-dereference -Wformat=2 -Wno-format-nonliteral -Wno-unused-parameter -Wno-unused-function -Wno-unknown-warning-option -Wvla-larger-than=0
-SANZ = -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
+WARN = -Wall -Wextra -Wnull-dereference -Wvla -Wformat=2 -Wno-format-nonliteral -Wno-unused-parameter -Wno-unused-function
+SANZ = -fno-common -fno-omit-frame-pointer -fsanitize-trap=unreachable -fsanitize=address,undefined
 
-CPPFLAGS += -I./include -I../STC/include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=4000000000
-CFLAGS   += -MMD -MP $(WARN)
+CPPFLAGS += -I./include -D_GNU_SOURCE -DDEFAULT_ARENA_SIZE=4000000000
+CFLAGS   += -MMD -MP $(WARN) -fpie
+LDFLAGS  += -pie -lm
 
 .PHONY: debug release
 debug: CFLAGS += $(SANZ) -O0 -g3 -DLOGGING -DOOM_COMMIT
@@ -41,7 +42,7 @@ $(BIN_TARGET): $(OBJ)
 	$(CC) -o $@ $(LDFLAGS) $^
 
 $(LIB_TARGET): $(LIB_OBJ)
-	$(CC) -o $@ -fPIC -shared $(LDFLAGS) $^
+	$(AR) rcs $@ $^
 
 $(BUILD_DIR)/%.o : %.c
 	mkdir -p $(dir $@)
@@ -56,12 +57,11 @@ clean:
 .PHONY: deps
 deps:
 	(cd include; ../pkg.sh import)
-	curl -s --output-dir include -O https://raw.githubusercontent.com/JacksonAllan/CC/refs/heads/main/cc.h
-	curl -s --output-dir include -O https://raw.githubusercontent.com/JacksonAllan/Verstable/refs/heads/main/verstable.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/hirrolot/datatype99/refs/heads/master/datatype99.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/hirrolot/interface99/refs/heads/master/interface99.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/attractivechaos/klib/refs/heads/master/ketopt.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/sheredom/utf8.h/refs/heads/master/utf8.h
+	curl -s --output-dir include -O https://raw.githubusercontent.com/JacksonAllan/Verstable/refs/heads/main/verstable.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/spevnev/uprintf/main/uprintf.h
 	curl -s --output-dir include -O https://raw.githubusercontent.com/sheredom/utest.h/refs/heads/master/utest.h
 

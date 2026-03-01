@@ -15,8 +15,8 @@
 #ifndef ARENA_H_
 #define ARENA_H_
 
-#include <memory.h>
 #include <setjmp.h>
+#include <stdalign.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -213,12 +213,12 @@ static void autofree_impl(void* p) {
  */
 #define New(...)                  _NEWX(__VA_ARGS__, _NEW4, _NEW3, _NEW2)(__VA_ARGS__)
 #define _NEWX(a, b, c, d, e, ...) e
-#define _NEW2(a, t)               (t*)arena_alloc(a, sizeof(t), _Alignof(t), 1, (ArenaFlag){0})
-#define _NEW3(a, t, n)            (t*)arena_alloc(a, sizeof(t), _Alignof(t), n, (ArenaFlag){0})
+#define _NEW2(a, t)               (t*)arena_alloc(a, sizeof(t), alignof(t), 1, (ArenaFlag){0})
+#define _NEW3(a, t, n)            (t*)arena_alloc(a, sizeof(t), alignof(t), n, (ArenaFlag){0})
 #define _NEW4(a, t, n, z)                                                                                \
   ({                                                                                                     \
     __auto_type _z = (z);                                                                                \
-    (t*)_Generic(_z, t*: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), _Alignof(t), n,         \
+    (t*)_Generic(_z, t*: arena_alloc_init, ArenaFlag: arena_alloc)(a, sizeof(t), alignof(t), n,          \
                                                                    _Generic(_z, t*: _z, ArenaFlag: _z)); \
   })
 
@@ -282,17 +282,17 @@ static void arena_restore(Arena** a) {
  *   *Push(&fibs, arena) = 2;
  *   *Push(&fibs, arena) = 3;
  */
-#define Push(arena, slice)                                                             \
-  ({                                                                                   \
-    __auto_type _s = slice;                                                            \
-    Assert(_s->len >= 0 && "slice.len must be non-negative");                          \
-    Assert(_s->cap >= 0 && "slice.cap must be non-negative");                          \
-    Assert(!(_s->data == NULL && _s->len > 0) && "Invalid slice");                     \
-    Assert(_s->len <= _s->cap || _s->cap == 0);                                        \
-    if (_s->len >= _s->cap) {                                                          \
-      arena_slice_grow(arena, _s, sizeof(*_s->data), _Alignof(__typeof__(*_s->data))); \
-    }                                                                                  \
-    _s->data + _s->len++;                                                              \
+#define Push(arena, slice)                                                            \
+  ({                                                                                  \
+    __auto_type _s = slice;                                                           \
+    Assert(_s->len >= 0 && "slice.len must be non-negative");                         \
+    Assert(_s->cap >= 0 && "slice.cap must be non-negative");                         \
+    Assert(!(_s->data == NULL && _s->len > 0) && "Invalid slice");                    \
+    Assert(_s->len <= _s->cap || _s->cap == 0);                                       \
+    if (_s->len >= _s->cap) {                                                         \
+      arena_slice_grow(arena, _s, sizeof(*_s->data), alignof(__typeof__(*_s->data))); \
+    }                                                                                 \
+    _s->data + _s->len++;                                                             \
   })
 
 /**
@@ -570,7 +570,7 @@ ARENA_INLINE void arena_slice_grow(Arena* arena, void* slice, isize size, isize 
  */
 ARENA_INLINE void* arena_malloc(size_t size, Arena* arena) {
   Assert(arena != NULL && "arena cannot be NULL");
-  return arena_alloc(arena, size, _Alignof(max_align_t), 1, NO_INIT);
+  return arena_alloc(arena, size, alignof(max_align_t), 1, NO_INIT);
 }
 
 /**
@@ -811,14 +811,17 @@ ARENA_INLINE astr _astr_split_by_char(astr s, const unsigned char table[static 2
  *     i++;
  *   }
  */
-#define astr_split_by_char(it, charset, str)                    \
-  struct {                                                      \
-    astr input, token;                                          \
-    unsigned char table[256 / 8];                               \
-    isize pos;                                                  \
-  } it = {.input = str};                                        \
-  (it.table[0] || (_astr_charset_table(charset, it.table), 1)), \
-      it.pos < it.input.len && (it.token = _astr_split_by_char(it.input, it.table, &it.pos)).len > 0;
+// clang-format off
+#define astr_split_by_char(it, charset, str)                   \
+  struct {                                                     \
+    astr input, token;                                         \
+    isize pos;                                                 \
+    unsigned char table[256 / 8];                              \
+  } it = {.input = str};                                       \
+  (it.table[0] || (_astr_charset_table(charset, it.table), 1)) \
+     && it.pos < it.input.len                                  \
+     && (it.token = _astr_split_by_char(it.input, it.table, &it.pos)).len > 0;
+// clang-format on
 
 // Internal helper for astr_split
 ARENA_INLINE astr _astr_split(astr s, astr sep, isize* pos) {
@@ -908,7 +911,8 @@ ARENA_INLINE bool astr_contains(astr s, astr needle) {
  * @return Position of first match, or -1 if not found
  */
 ARENA_INLINE isize astr_find(astr s, astr needle) {
-  if (needle.len == 0) return 0;
+  if (needle.len == 0)
+    return 0;
   const char* p = memmem(s.data, s.len, needle.data, needle.len);
   return p ? (isize)(p - s.data) : -1;
 }
@@ -993,12 +997,6 @@ ARENA_INLINE uint64_t astr_hash(astr key) {
  * Hash table integration example:
  *
  * @code
- * #include "cc.h"
- *
- * static inline uint64_t astr_wyhash(astr key) {
- *   return cc_wyhash(key.data, key.len);
- * }
- *
  * static inline void *vt_arena_malloc(size_t size, Arena **ctx) {
  *   return arena_malloc(size, *ctx);
  * }
@@ -1012,7 +1010,7 @@ ARENA_INLINE uint64_t astr_hash(astr key) {
  * #define VAL_TY    astr
  * #define CTX_TY    Arena *
  * #define CMPR_FN   astr_equals
- * #define HASH_FN   astr_wyhash
+ * #define HASH_FN   astr_hash
  * #define MALLOC_FN vt_arena_malloc
  * #define FREE_FN   vt_arena_free
  * #include "verstable.h"
